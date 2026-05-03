@@ -61,9 +61,21 @@ Coding rules are defined in .github/instructions/ and loaded automatically by fi
 
 ## Subagents
 
-When completing a technical task (new feature, bug fix, refactor), delegate to subagents for quality assurance:
+When completing any task on a Rust file, delegate to subagents for quality assurance:
 
+- **Review Agent** — Use the review agent (.github/agents/rust-reviewer.agent.md) to validate changes against specs and project conventions before finishing
 - **Build Agent**: Use the build agent (build.agent.md) to ensure your code compiles and builds correctly.
-- **Linting Agent**: Use the linting agent (linter.agent.md) to check for code style, formatting, clippy warnings, and adherence to project conventions.
-- **Testing Agent**: Use the testing agent (test.agent.md) to write tests, implement TDD cycles, and verify coverage targets.
-- **Security Agent**: Use the security agent (security.agent.md) to review code for security vulnerabilities, especially when handling user input or external data.
+- **Linting Agent**: Use the linting agent (.github/agents/linter.agent.md) to check for code style, formatting, clippy warnings, and adherence to project conventions.
+- **Testing Agent**: Use the testing agent (.github/agents/test.agent.md) to write tests, implement TDD cycles, and verify coverage targets.
+
+Run first the Review Agent to check for correctness, safety, and spec adherence. Then run the others if no issue found.
+
+When updating a library, use the following subagents:
+
+- **Security Agent**: Use the security agent (.github/agents/security.agent.md) to review code for security vulnerabilities.
+
+When implementing a new feature or modifying an existing one, use the following subagents:
+
+- **OpenSpec Agent** — Use the openspec agent (.github/agents/openspec.agent.md) to update specifications after implementing or modifying features
+
+Specifications must always be up to date at the end of any task that adds, changes, or removes functionality. After completing implementation work, run the OpenSpec subagent to synchronize openspec/specs/ with the current state of the code.

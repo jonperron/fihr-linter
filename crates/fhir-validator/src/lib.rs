@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! FHIR R5 resource validator.
 //!
 //! Applies validation layers in order: structural, cardinality, type,

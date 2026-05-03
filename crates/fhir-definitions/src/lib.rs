@@ -1,3 +1,4 @@
+#![forbid(unsafe_code)]
 //! FHIR R5 definitions registry.
 //!
 //! Loads and indexes StructureDefinitions, ValueSets, and CodeSystems from

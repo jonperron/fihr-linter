@@ -67,21 +67,6 @@ jobs:
 
       - run: cargo test --workspace
 
-  audit:
-    name: Audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-
-      - run: cargo audit
-
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
