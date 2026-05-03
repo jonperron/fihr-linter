@@ -1,0 +1,19 @@
+[package]
+name        = "fhir-linter"
+description = "Configurable FHIR lint rules on top of the validator"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+
+[dependencies]
+serde            = { workspace = true }
+serde_json       = { workspace = true }
+thiserror        = { workspace = true }
+fhir-definitions = { workspace = true }
+fhir-validator   = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }

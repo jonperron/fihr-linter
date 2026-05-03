@@ -1,0 +1,61 @@
+[workspace]
+members = [
+    "crates/fhir-definitions",
+    "crates/fhir-parser",
+    "crates/fhir-fhirpath",
+    "crates/fhir-validator",
+    "crates/fhir-linter",
+    "crates/fhir-cli",
+    "bindings/python",
+    "bindings/typescript",
+]
+
+[workspace.package]
+version      = "0.1.0"
+edition      = "2024"
+authors      = ["fhir-linter contributors"]
+license      = "MIT"
+repository   = "https://github.com/example/fhir-linter"
+rust-version = "1.85"
+
+[workspace.dependencies]
+# Serialisation
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+
+# XML parsing
+quick-xml   = { version = "0.37", features = ["serialize"] }
+
+# FHIRPath parser
+pest        = "2"
+pest_derive = "2"
+
+# Collections
+indexmap    = { version = "2", features = ["serde"] }
+
+# CLI
+clap        = { version = "4", features = ["derive"] }
+
+# Diagnostics
+miette      = { version = "7", features = ["fancy"] }
+thiserror   = "2"
+
+# Bindings
+pyo3         = { version = "0.24.1", features = ["extension-module"] }
+wasm-bindgen = "0.2"
+
+# Testing
+rstest      = "0.23"
+proptest    = "1"
+assert_cmd  = "2"
+predicates  = "3"
+
+# Benchmarks
+criterion   = { version = "0.5", features = ["html_reports"] }
+
+# Internal crates
+fhir-definitions = { path = "crates/fhir-definitions" }
+fhir-parser      = { path = "crates/fhir-parser" }
+fhir-fhirpath    = { path = "crates/fhir-fhirpath" }
+fhir-validator   = { path = "crates/fhir-validator" }
+fhir-linter      = { path = "crates/fhir-linter" }

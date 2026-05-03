@@ -22,3 +22,11 @@ target
 
 # Node
 node_modules/
+
+# Added by cargo
+/target
+
+# Local files
+.editorconfig
+.vscode/
+PLAN.md

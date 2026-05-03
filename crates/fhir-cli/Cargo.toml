@@ -1,0 +1,25 @@
+[package]
+name        = "fhir-cli"
+description = "Command-line interface for the FHIR linter and validator"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+
+[[bin]]
+name = "fhir-lint"
+path = "src/main.rs"
+
+[dependencies]
+clap           = { workspace = true }
+miette         = { workspace = true }
+fhir-definitions = { workspace = true }
+fhir-parser    = { workspace = true }
+fhir-validator = { workspace = true }
+fhir-linter    = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = { workspace = true }

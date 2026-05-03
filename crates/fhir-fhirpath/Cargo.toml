@@ -1,0 +1,19 @@
+[package]
+name        = "fhir-fhirpath"
+description = "FHIRPath 2.0 expression evaluator"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+
+[dependencies]
+pest        = { workspace = true }
+pest_derive = { workspace = true }
+thiserror   = { workspace = true }
+serde_json  = { workspace = true }
+
+[dev-dependencies]
+rstest   = { workspace = true }
+proptest = { workspace = true }

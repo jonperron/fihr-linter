@@ -1,0 +1,19 @@
+[package]
+name        = "fhir-validator"
+description = "Structural, cardinality, type, terminology, and invariant validation for FHIR R5"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror        = { workspace = true }
+fhir-definitions = { workspace = true }
+fhir-parser      = { workspace = true }
+fhir-fhirpath    = { workspace = true }
+
+[dev-dependencies]
+rstest   = { workspace = true }
+proptest = { workspace = true }
