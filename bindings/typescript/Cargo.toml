@@ -1,0 +1,20 @@
+[package]
+name        = "fhir-wasm"
+description = "TypeScript/WASM bindings for the FHIR linter and validator (wasm-bindgen)"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen   = { workspace = true }
+fhir-validator = { workspace = true }
+fhir-linter    = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }

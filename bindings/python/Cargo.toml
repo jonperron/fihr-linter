@@ -1,0 +1,21 @@
+[package]
+name        = "fhir-python"
+description = "Python bindings for the FHIR linter and validator (PyO3)"
+version.workspace     = true
+edition.workspace     = true
+authors.workspace     = true
+license.workspace     = true
+repository.workspace  = true
+rust-version.workspace = true
+
+[lib]
+name  = "fhir_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3           = { workspace = true }
+fhir-validator = { workspace = true }
+fhir-linter    = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
