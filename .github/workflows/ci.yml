@@ -65,6 +65,17 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Cache FHIR R5 definitions
+        id: cache-fhir-r5
+        uses: actions/cache@v4
+        with:
+          path: definitions/r5
+          key: fhir-r5-${{ hashFiles('scripts/download-definitions.sh') }}
+
+      - name: Download FHIR R5 definitions
+        if: steps.cache-fhir-r5.outputs.cache-hit != 'true'
+        run: bash scripts/download-definitions.sh
+
       - run: cargo test --workspace
 
   coverage:
@@ -80,6 +91,17 @@ jobs:
           components: llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Cache FHIR R5 definitions
+        id: cache-fhir-r5
+        uses: actions/cache@v4
+        with:
+          path: definitions/r5
+          key: fhir-r5-${{ hashFiles('scripts/download-definitions.sh') }}
+
+      - name: Download FHIR R5 definitions
+        if: steps.cache-fhir-r5.outputs.cache-hit != 'true'
+        run: bash scripts/download-definitions.sh
 
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked

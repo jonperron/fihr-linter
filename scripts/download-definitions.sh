@@ -36,7 +36,7 @@ EXAMPLES_URL="https://hl7.org/fhir/R5/examples-json.zip"
 # SHA-256 checksums (update when a new FHIR R5 patch is released).
 # Obtain the correct value by running:
 #   curl -fsSL <URL> | sha256sum
-DEFINITIONS_SHA256="b97218f6e13b62a4b7c6de5b1a83a39f2c34bfad37d3de10d498b4e07f218e2f"
+DEFINITIONS_SHA256="df0d7259b4a8741d59f4971d96dd486423ecbd414c7060e9dc006ae3c3209c0c"
 # TODO: replace with the real SHA-256 of examples-json.zip before enabling.
 # The placeholder below is intentionally wrong to prevent accidental use.
 EXAMPLES_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
@@ -44,6 +44,8 @@ EXAMPLES_SHA256="000000000000000000000000000000000000000000000000000000000000000
 # SHA-256 of an empty string — never a valid archive checksum.
 # Guard against accidentally committing this value.
 EMPTY_SHA256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+# All-zeros placeholder — signals that the artifact is not yet configured; skip.
+ZERO_SHA256="0000000000000000000000000000000000000000000000000000000000000000"
 
 # ---------------------------------------------------------------------------
 
@@ -61,14 +63,12 @@ require_cmd python3
 
 mkdir -p "${OUT_DIR}"
 
-# Abort early if any checksum is the SHA-256 of the empty string (placeholder).
-for checksum in "${DEFINITIONS_SHA256}" "${EXAMPLES_SHA256}"; do
-    if [[ "${checksum}" == "${EMPTY_SHA256}" ]]; then
-        echo "ERROR: A SHA-256 checksum is set to the hash of an empty string." >&2
-        echo "       Update the checksum constants with the real artifact hashes." >&2
-        exit 3
-    fi
-done
+# Abort early if DEFINITIONS checksum is the SHA-256 of the empty string.
+if [[ "${DEFINITIONS_SHA256}" == "${EMPTY_SHA256}" ]]; then
+    echo "ERROR: DEFINITIONS_SHA256 is set to the hash of an empty string." >&2
+    echo "       Update the checksum constant with the real artifact hash." >&2
+    exit 3
+fi
 
 # Verify that all paths extracted from a zip archive stay within OUT_DIR.
 # Mitigates Zip Slip (CWE-22).
@@ -134,7 +134,13 @@ download_and_verify() {
 }
 
 download_and_verify "${DEFINITIONS_URL}" "${DEFINITIONS_SHA256}"
-download_and_verify "${EXAMPLES_URL}"    "${EXAMPLES_SHA256}"
+
+# Skip examples download when the checksum is the all-zeros placeholder.
+if [[ "${EXAMPLES_SHA256}" != "${ZERO_SHA256}" ]]; then
+    download_and_verify "${EXAMPLES_URL}" "${EXAMPLES_SHA256}"
+else
+    echo "[skip] examples-json.zip — checksum not configured (placeholder)."
+fi
 
 echo ""
 echo "FHIR R5 definitions ready in ${OUT_DIR}"

@@ -301,9 +301,7 @@ dependencies = [
 name = "fhir-definitions"
 version = "0.1.0"
 dependencies = [
- "indexmap",
  "rstest",
- "serde",
  "serde_json",
  "thiserror",
 ]
