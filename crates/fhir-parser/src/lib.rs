@@ -3,3 +3,10 @@
 //!
 //! Converts JSON or XML input into a typed `Resource` AST, preserving source
 //! spans for precise diagnostic messages.
+
+mod json;
+mod line_index;
+mod types;
+
+pub use json::parse_json;
+pub use types::{Node, ParseError, Resource, Span, Value};

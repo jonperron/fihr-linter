@@ -9,11 +9,9 @@ repository.workspace  = true
 rust-version.workspace = true
 
 [dependencies]
-serde_json       = { workspace = true }
 quick-xml        = { workspace = true }
 indexmap         = { workspace = true }
 thiserror        = { workspace = true }
-fhir-definitions = { workspace = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
