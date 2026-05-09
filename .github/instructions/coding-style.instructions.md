@@ -41,3 +41,4 @@ applyTo: "**/*.rs"
 - `Diagnostic` is the single output type across all crates — do not introduce alternatives.
 - `serde_json::Value`-based generic tree in `fhir-definitions`; no per-resource Serde structs.
 - Use `rstest` for parameterised tests, `proptest` for property-based tests.
+- Use `?` to propagate `None` for required fields rather than `unwrap_or("")`/`unwrap_or_default()`. Defaulting to an empty value hides malformed inputs and can produce model instances that violate invariants.

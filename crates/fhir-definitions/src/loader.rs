@@ -102,13 +102,13 @@ fn parse_element_definition(elem: &Value) -> Option<ElementDefinition> {
 
 fn parse_value_set(resource: &Value) -> Option<ValueSet> {
     let url: Arc<str> = resource["url"].as_str()?.into();
-    let name: Arc<str> = resource["name"].as_str().unwrap_or("").into();
+    let name: Arc<str> = resource["name"].as_str()?.into();
     Some(ValueSet { url, name })
 }
 
 fn parse_code_system(resource: &Value) -> Option<CodeSystem> {
     let url: Arc<str> = resource["url"].as_str()?.into();
-    let name: Arc<str> = resource["name"].as_str().unwrap_or("").into();
+    let name: Arc<str> = resource["name"].as_str()?.into();
     Some(CodeSystem { url, name })
 }
 
@@ -270,5 +270,27 @@ mod tests {
             "element without path should be skipped"
         );
         assert_eq!(sd.snapshot[0].path.as_ref(), "TestSD2.id");
+    }
+
+    #[test]
+    fn load_bundle_skips_value_set_with_missing_name() {
+        let content = r#"{"entry": [{"resource": {"resourceType": "ValueSet", "url": "http://example.com/vs-no-name"}}]}"#;
+        let path = write_temp("fhir_def_test_vs_no_name.json", content);
+        let mut sds = HashMap::new();
+        let mut vss = HashMap::new();
+        let mut css = HashMap::new();
+        load_bundle(&path, &mut sds, &mut vss, &mut css).unwrap();
+        assert!(vss.is_empty(), "ValueSet without name should be skipped");
+    }
+
+    #[test]
+    fn load_bundle_skips_code_system_with_missing_name() {
+        let content = r#"{"entry": [{"resource": {"resourceType": "CodeSystem", "url": "http://example.com/cs-no-name"}}]}"#;
+        let path = write_temp("fhir_def_test_cs_no_name.json", content);
+        let mut sds = HashMap::new();
+        let mut vss = HashMap::new();
+        let mut css = HashMap::new();
+        load_bundle(&path, &mut sds, &mut vss, &mut css).unwrap();
+        assert!(css.is_empty(), "CodeSystem without name should be skipped");
     }
 }

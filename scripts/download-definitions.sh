@@ -70,6 +70,14 @@ if [[ "${DEFINITIONS_SHA256}" == "${EMPTY_SHA256}" ]]; then
     exit 3
 fi
 
+# Abort early if EXAMPLES checksum is the SHA-256 of the empty string,
+# but only when it has been intentionally configured (i.e. not the all-zeros placeholder).
+if [[ "${EXAMPLES_SHA256}" != "${ZERO_SHA256}" && "${EXAMPLES_SHA256}" == "${EMPTY_SHA256}" ]]; then
+    echo "ERROR: EXAMPLES_SHA256 is set to the hash of an empty string." >&2
+    echo "       Update the checksum constant with the real artifact hash." >&2
+    exit 3
+fi
+
 # Verify that all paths extracted from a zip archive stay within OUT_DIR.
 # Mitigates Zip Slip (CWE-22).
 check_zip_paths() {
