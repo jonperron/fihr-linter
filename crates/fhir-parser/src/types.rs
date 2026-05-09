@@ -3,11 +3,21 @@ use std::sync::Arc;
 use indexmap::IndexMap;
 
 /// Byte offset and 1-indexed line/column of a source location.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub line: u32,
     pub col: u32,
     pub offset: u32,
+}
+
+impl Default for Span {
+    fn default() -> Self {
+        Self {
+            line: 1,
+            col: 1,
+            offset: 0,
+        }
+    }
 }
 
 /// A FHIR JSON value variant.
