@@ -45,10 +45,19 @@ pub fn parse_json(source: &str) -> Result<Resource, ParseError> {
         },
     };
 
-    let id = fields.shift_remove("id").and_then(|n| match n.value {
-        Value::Str(s) => Some(s),
-        _ => None,
-    });
+    let id = match fields.shift_remove("id") {
+        None => None,
+        Some(n) => match n.value {
+            Value::Str(s) => Some(s),
+            _ => {
+                return Err(ParseError::JsonError {
+                    message: "'id' must be a string".into(),
+                    line: n.span.line,
+                    col: n.span.col,
+                });
+            }
+        },
+    };
 
     Ok(Resource {
         resource_type,
@@ -255,8 +264,10 @@ impl<'src, 'idx> Scanner<'src, 'idx> {
                                     self.pos += 1;
                                 }
                                 b'u' => {
+                                    // self.pos currently points at 'u'; backslash is one behind.
+                                    let escape_offset = self.pos - 1;
                                     self.pos += 1;
-                                    let c = self.scan_unicode_escape(start)?;
+                                    let c = self.scan_unicode_escape(escape_offset)?;
                                     result.push(c);
                                 }
                                 other => {
@@ -337,6 +348,12 @@ impl<'src, 'idx> Scanner<'src, 'idx> {
         }
         if self.pos == digit_start {
             return Err(self.error_at(start, "invalid number: expected digit"));
+        }
+
+        // JSON forbids leading zeros in integer parts: 01, -00, etc.
+        let integer_digits = &self.source[digit_start..self.pos];
+        if integer_digits.len() > 1 && integer_digits[0] == b'0' {
+            return Err(self.error_at(digit_start, "invalid number: leading zeros are not allowed"));
         }
 
         if self.pos < self.source.len() && self.source[self.pos] == b'.' {
@@ -586,6 +603,44 @@ mod tests {
     fn resource_type_wrong_type_returns_json_error() {
         let result = parse_json(r#"{"resourceType": 42}"#);
         assert!(matches!(result, Err(ParseError::JsonError { .. })));
+    }
+
+    #[test]
+    fn id_wrong_type_returns_json_error() {
+        let result = parse_json(r#"{"resourceType": "Patient", "id": 123}"#);
+        assert!(matches!(result, Err(ParseError::JsonError { .. })));
+    }
+
+    #[test]
+    fn leading_zero_integer_rejected() {
+        let result = parse_json(r#"{"resourceType": "Basic", "count": 01}"#);
+        assert!(matches!(result, Err(ParseError::JsonError { .. })));
+    }
+
+    #[test]
+    fn leading_zero_negative_rejected() {
+        let result = parse_json(r#"{"resourceType": "Basic", "count": -00}"#);
+        assert!(matches!(result, Err(ParseError::JsonError { .. })));
+    }
+
+    #[test]
+    fn zero_alone_is_valid() {
+        let source = r#"{"resourceType": "Basic", "count": 0}"#;
+        let resource = parse_json(source).unwrap();
+        assert!(matches!(
+            resource.fields.get("count").unwrap().value,
+            Value::Integer(0)
+        ));
+    }
+
+    #[test]
+    fn zero_point_fraction_is_valid() {
+        let source = r#"{"resourceType": "Basic", "ratio": 0.5}"#;
+        let resource = parse_json(source).unwrap();
+        assert!(matches!(
+            resource.fields.get("ratio").unwrap().value,
+            Value::Decimal(_)
+        ));
     }
 
     #[test]
