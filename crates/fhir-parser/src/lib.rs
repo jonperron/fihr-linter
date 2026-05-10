@@ -7,6 +7,8 @@
 mod json;
 mod line_index;
 mod types;
+mod xml;
 
 pub use json::parse_json;
 pub use types::{Node, ParseError, Resource, Span, Value};
+pub use xml::parse_xml;
