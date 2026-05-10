@@ -51,20 +51,24 @@ pub fn parse_xml(source: &str) -> Result<Resource, ParseError> {
                     },
                 };
 
-                return Ok(Resource {
+                let resource = Resource {
                     resource_type,
                     id,
                     fields,
-                });
+                };
+                expect_eof(&mut reader, &line_index)?;
+                return Ok(resource);
             }
             Event::Empty(ref e) => {
                 // Self-closing root element - unusual but handle gracefully.
                 let resource_type = local_name_arc(e.local_name().as_ref(), &line_index, pos)?;
-                return Ok(Resource {
+                let resource = Resource {
                     resource_type,
                     id: None,
                     fields: IndexMap::new(),
-                });
+                };
+                expect_eof(&mut reader, &line_index)?;
+                return Ok(resource);
             }
             Event::Eof => {
                 return Err(ParseError::XmlError {
@@ -103,26 +107,21 @@ fn parse_children(
                     // XHTML narrative: collect text content and skip child elements.
                     let text = read_xhtml_text(reader, line_index, pos)?;
                     Node {
-                        value: Value::Str(Arc::from(text.as_str())),
+                        value: Value::Str(Arc::from(text)),
                         span,
                     }
                 } else {
-                    let attr_val = value_attr(e, line_index, pos)?;
+                    let attrs = collect_attrs(e, line_index, pos)?;
                     let children = parse_children(reader, line_index)?;
-                    build_complex_node(attr_val, children, span)
+                    build_complex_node(attrs, children, span)
                 };
                 groups.entry(name).or_default().push(node);
             }
             Event::Empty(ref e) => {
                 let name = local_name_arc(e.local_name().as_ref(), line_index, pos)?;
                 let span = span_at(line_index, pos);
-                let attr_val = value_attr(e, line_index, pos)?;
-                let node = Node {
-                    value: attr_val
-                        .map(Value::Str)
-                        .unwrap_or(Value::Object(IndexMap::new())),
-                    span,
-                };
+                let attrs = collect_attrs(e, line_index, pos)?;
+                let node = build_complex_node(attrs, IndexMap::new(), span);
                 groups.entry(name).or_default().push(node);
             }
             Event::End(_) => break,
@@ -142,40 +141,46 @@ fn parse_children(
     collapse_groups(groups)
 }
 
-/// A complex element can carry both a `value` attribute (primitive value) and
-/// child elements (typically extensions). Represent it as an `Object` with a
-/// `"value"` key prepended.
+/// Build a `Node` from an element's attributes and child-element map.
+///
+/// The simplest case — a single `value` attribute and no children — yields a
+/// `Value::Str` directly (the common FHIR primitive form).
+/// Every other combination produces a `Value::Object` that merges attributes
+/// (with `value` first when present) followed by child nodes, preserving all
+/// non-xmlns attribute data such as the `url` on `<extension>` elements.
 fn build_complex_node(
-    attr_val: Option<Arc<str>>,
+    attrs: IndexMap<Arc<str>, Node>,
     children: IndexMap<Arc<str>, Node>,
     span: Span,
 ) -> Node {
-    if let Some(val) = attr_val {
-        if children.is_empty() {
-            Node {
-                value: Value::Str(val),
-                span,
-            }
-        } else {
-            let mut obj: IndexMap<Arc<str>, Node> = IndexMap::new();
-            obj.insert(
-                Arc::from("value"),
-                Node {
-                    value: Value::Str(val),
+    // Simple primitive: only a `value` attribute and no child elements.
+    if attrs.len() == 1 && children.is_empty() {
+        if let Some(node) = attrs.get("value") {
+            if let Value::Str(s) = &node.value {
+                return Node {
+                    value: Value::Str(Arc::clone(s)),
                     span,
-                },
-            );
-            obj.extend(children);
-            Node {
-                value: Value::Object(obj),
-                span,
+                };
             }
         }
-    } else {
-        Node {
-            value: Value::Object(children),
-            span,
+    }
+
+    // Complex node: merge attributes then children into an Object.
+    // `value` is inserted first so it appears at the front of the map.
+    let mut obj: IndexMap<Arc<str>, Node> = IndexMap::with_capacity(attrs.len() + children.len());
+    if let Some(v) = attrs.get("value") {
+        obj.insert(Arc::from("value"), v.clone());
+    }
+    for (k, v) in &attrs {
+        if k.as_ref() != "value" {
+            obj.insert(Arc::clone(k), v.clone());
         }
+    }
+    obj.extend(children);
+
+    Node {
+        value: Value::Object(obj),
+        span,
     }
 }
 
@@ -266,6 +271,52 @@ fn read_xhtml_text(
     Ok(text)
 }
 
+// -- Trailing-content guard ---------------------------------------------------
+
+/// Consume remaining events after the root element and return an error if any
+/// non-whitespace content (element or non-empty text) is found before `Eof`.
+fn expect_eof(reader: &mut Reader<&[u8]>, line_index: &LineIndex) -> Result<(), ParseError> {
+    loop {
+        let pos = reader.buffer_position() as u32;
+        match reader
+            .read_event()
+            .map_err(|e| xml_error(line_index, pos, e))?
+        {
+            Event::Eof => return Ok(()),
+            Event::Text(ref t) => {
+                // Whitespace-only text between elements is allowed.
+                let unescaped = t.unescape().map_err(|e| {
+                    let (line, col) = line_index.location(pos);
+                    ParseError::XmlError {
+                        message: format!("invalid trailing text: {e}"),
+                        line,
+                        col,
+                    }
+                })?;
+                if !unescaped.chars().all(char::is_whitespace) {
+                    let (line, col) = line_index.location(pos);
+                    return Err(ParseError::XmlError {
+                        message: "unexpected content after root element".into(),
+                        line,
+                        col,
+                    });
+                }
+            }
+            // Any element (start, empty) after the root is invalid.
+            Event::Start(_) | Event::Empty(_) => {
+                let (line, col) = line_index.location(pos);
+                return Err(ParseError::XmlError {
+                    message: "unexpected element after root element".into(),
+                    line,
+                    col,
+                });
+            }
+            // Comments, PIs, and the XML declaration are ignored.
+            _ => {}
+        }
+    }
+}
+
 // -- Helpers -------------------------------------------------------------------
 
 /// Convert a local name byte slice to `Arc<str>`, returning an error when the
@@ -282,13 +333,18 @@ fn local_name_arc(bytes: &[u8], line_index: &LineIndex, pos: u32) -> Result<Arc<
     })
 }
 
-/// Extract the `value` attribute from a FHIR element, returning `None` when
-/// the attribute is absent.
-fn value_attr<'a>(
-    e: &quick_xml::events::BytesStart<'a>,
+/// Collect all non-xmlns attributes of an element into an ordered map of
+/// `local_name -> Node`. Namespace declarations (`xmlns`, `xmlns:prefix`) are
+/// skipped; all data-carrying attributes (including `value` and `url`) are
+/// captured as `Value::Str` nodes at the element's span.
+fn collect_attrs(
+    e: &quick_xml::events::BytesStart<'_>,
     line_index: &LineIndex,
     pos: u32,
-) -> Result<Option<Arc<str>>, ParseError> {
+) -> Result<IndexMap<Arc<str>, Node>, ParseError> {
+    let span = span_at(line_index, pos);
+    let mut attrs: IndexMap<Arc<str>, Node> = IndexMap::new();
+
     for attr_result in e.attributes() {
         let attr = attr_result.map_err(|e| {
             let (line, col) = line_index.location(pos);
@@ -298,19 +354,33 @@ fn value_attr<'a>(
                 col,
             }
         })?;
-        if attr.key.local_name().as_ref() == b"value" {
-            let val = attr.unescape_value().map_err(|e| {
-                let (line, col) = line_index.location(pos);
-                ParseError::XmlError {
-                    message: format!("invalid attribute value: {e}"),
-                    line,
-                    col,
-                }
-            })?;
-            return Ok(Some(Arc::from(val.as_ref())));
+
+        // Skip namespace declarations.
+        let raw_key = attr.key.as_ref();
+        if raw_key == b"xmlns" || raw_key.starts_with(b"xmlns:") {
+            continue;
         }
+
+        let local = local_name_arc(attr.key.local_name().as_ref(), line_index, pos)?;
+        let val = attr.unescape_value().map_err(|e| {
+            let (line, col) = line_index.location(pos);
+            ParseError::XmlError {
+                message: format!("invalid attribute value: {e}"),
+                line,
+                col,
+            }
+        })?;
+
+        attrs.insert(
+            local,
+            Node {
+                value: Value::Str(Arc::from(val.as_ref())),
+                span,
+            },
+        );
     }
-    Ok(None)
+
+    Ok(attrs)
 }
 
 fn span_at(line_index: &LineIndex, pos: u32) -> Span {
@@ -477,6 +547,29 @@ mod tests {
     }
 
     #[test]
+    fn trailing_element_after_root_returns_error() {
+        let result = parse_xml(
+            "<Patient xmlns=\"http://hl7.org/fhir\"/><Observation xmlns=\"http://hl7.org/fhir\"/>",
+        );
+        assert!(
+            matches!(result, Err(ParseError::XmlError { .. })),
+            "multiple root elements should be rejected"
+        );
+    }
+
+    #[test]
+    fn trailing_whitespace_after_root_is_allowed() {
+        let source = concat!(
+            "<?xml version=\"1.0\"?>\n",
+            "<Patient xmlns=\"http://hl7.org/fhir\">\n",
+            "  <id value=\"p1\"/>\n",
+            "</Patient>\n",
+        );
+        // Trailing newline is whitespace — must not be rejected.
+        assert!(parse_xml(source).is_ok());
+    }
+
+    #[test]
     fn missing_root_element_returns_error() {
         let result = parse_xml("<?xml version=\"1.0\"?>");
         assert!(matches!(result, Err(ParseError::XmlError { .. })));
@@ -497,6 +590,61 @@ mod tests {
             matches!(result, Err(ParseError::XmlError { .. })),
             "truncated XML should return an error"
         );
+    }
+
+    #[test]
+    fn extension_url_attribute_is_preserved() {
+        let source = concat!(
+            "<?xml version=\"1.0\"?>\n",
+            "<Patient xmlns=\"http://hl7.org/fhir\">\n",
+            "  <id value=\"p1\"/>\n",
+            "  <extension url=\"http://example.org/ext\">\n",
+            "    <valueString value=\"hello\"/>\n",
+            "  </extension>\n",
+            "</Patient>",
+        );
+        let resource = parse_xml(source).unwrap();
+        let ext = resource
+            .fields
+            .get("extension")
+            .expect("extension field present");
+        if let Value::Object(obj) = &ext.value {
+            let url = obj.get("url").expect("url key present in extension");
+            assert!(
+                matches!(&url.value, Value::Str(s) if s.as_ref() == "http://example.org/ext"),
+                "extension url should be preserved"
+            );
+        } else {
+            panic!("extension should be an object, got {:?}", ext.value);
+        }
+    }
+
+    #[test]
+    fn self_closing_element_with_non_value_attr_is_object() {
+        // <coding system="http://..." code="MR"/> — no `value` attr, two other attrs.
+        let source = concat!(
+            "<?xml version=\"1.0\"?>\n",
+            "<Patient xmlns=\"http://hl7.org/fhir\">\n",
+            "  <id value=\"p1\"/>\n",
+            "  <identifier>\n",
+            "    <type>\n",
+            "      <coding>\n",
+            "        <system value=\"http://terminology.hl7.org/CodeSystem/v2-0203\"/>\n",
+            "        <code value=\"MR\"/>\n",
+            "      </coding>\n",
+            "    </type>\n",
+            "  </identifier>\n",
+            "</Patient>",
+        );
+        let resource = parse_xml(source).unwrap();
+        let identifier = resource.fields.get("identifier").unwrap();
+        if let Value::Object(id_obj) = &identifier.value {
+            let coding = id_obj.get("type").unwrap();
+            if let Value::Object(type_obj) = &coding.value {
+                let coding_inner = type_obj.get("coding").unwrap();
+                assert!(matches!(&coding_inner.value, Value::Object(_)));
+            }
+        }
     }
 
     #[test]
