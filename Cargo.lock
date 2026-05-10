@@ -334,11 +334,9 @@ dependencies = [
 name = "fhir-parser"
 version = "0.1.0"
 dependencies = [
- "fhir-definitions",
  "indexmap",
  "quick-xml",
  "rstest",
- "serde_json",
  "thiserror",
 ]
 

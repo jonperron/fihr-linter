@@ -58,4 +58,10 @@ pub enum ParseError {
         line: u32,
         col: u32,
     },
+    #[error("XML parse error at line {line}, column {col}: {message}")]
+    XmlError {
+        message: String,
+        line: u32,
+        col: u32,
+    },
 }
