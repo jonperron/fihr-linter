@@ -1,0 +1,115 @@
+// FHIRPath 2.0 Grammar (PEG via pest)
+// Reference: https://hl7.org/fhirpath/
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT    = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" | "//" ~ (!"\n" ~ ANY)* }
+
+// ── Top-level ──────────────────────────────────────────────────────────────
+expression = { implies_expr ~ EOI }
+
+// ── Boolean operators (lowest precedence) ──────────────────────────────────
+implies_expr = { or_expr ~ (implies_kw ~ or_expr)? }
+or_expr      = { and_expr ~ ((or_kw | xor_kw) ~ and_expr)* }
+and_expr     = { membership_expr ~ (and_kw ~ membership_expr)* }
+
+// ── Membership ──────────────────────────────────────────────────────────────
+membership_expr = { ineq_expr ~ ((in_kw | contains_kw) ~ ineq_expr)? }
+
+// ── Comparisons ─────────────────────────────────────────────────────────────
+ineq_expr = { eq_expr ~ ((lte | gte | lt | gt) ~ eq_expr)? }
+eq_expr   = { type_expr ~ ((neq | eq | tilde_eq | tilde_neq) ~ type_expr)? }
+
+lte      = { "<=" }
+gte      = { ">=" }
+lt       = { "<" }
+gt       = { ">" }
+eq       = { "=" }
+neq      = { "!=" }
+tilde_eq  = { "~" }
+tilde_neq = { "!~" }
+
+// ── Type operators ─────────────────────────────────────────────────────────
+type_expr = { union_expr ~ ((is_kw | as_kw) ~ type_specifier)? }
+
+type_specifier = { ident ~ ("." ~ ident)* }
+
+// ── Union ──────────────────────────────────────────────────────────────────
+union_expr = { add_expr ~ (pipe ~ add_expr)* }
+
+// ── Arithmetic ─────────────────────────────────────────────────────────────
+add_expr = { mul_expr ~ ((plus | minus | amp) ~ mul_expr)* }
+mul_expr = { unary_expr ~ ((star | slash | div_kw | mod_kw) ~ unary_expr)* }
+
+plus   = { "+" }
+minus  = { "-" }
+amp    = { "&" }
+star   = { "*" }
+slash  = { "/" }
+div_kw = @{ "div" ~ !(ASCII_ALPHANUMERIC | "_") }
+mod_kw = @{ "mod" ~ !(ASCII_ALPHANUMERIC | "_") }
+pipe   = { "|" }
+
+// ── Unary ──────────────────────────────────────────────────────────────────
+unary_expr    = { (unary_minus | unary_plus)? ~ postfix_expr }
+unary_minus   = { "-" }
+unary_plus    = { "+" }
+
+// ── Postfix / navigation ───────────────────────────────────────────────────
+postfix_expr = { primary_expr ~ postfix_step* }
+
+postfix_step = _{ dot_step | index_step }
+dot_step     =  { "." ~ (func_call | ident) }
+index_step   =  { "[" ~ expression_inner ~ "]" }
+
+// inner expression (no EOI)
+expression_inner = { implies_expr }
+
+// ── Primary ────────────────────────────────────────────────────────────────
+primary_expr = _{ paren_expr | literal | func_call | ident | dollar_this | dollar_index }
+
+paren_expr  =  { "(" ~ expression_inner ~ ")" }
+dollar_this =  { "$this" }
+dollar_index = { "$index" }
+
+// func_call must be tried before ident because both start with an identifier
+func_call = { ident ~ "(" ~ (expression_inner ~ ("," ~ expression_inner)*)? ~ ")" }
+
+// ── Keyword operators (atomic to prevent partial keyword matches) ────────────
+and_kw      = @{ "and"      ~ !(ASCII_ALPHANUMERIC | "_") }
+or_kw       = @{ "or"       ~ !(ASCII_ALPHANUMERIC | "_") }
+xor_kw      = @{ "xor"      ~ !(ASCII_ALPHANUMERIC | "_") }
+implies_kw  = @{ "implies"  ~ !(ASCII_ALPHANUMERIC | "_") }
+in_kw       = @{ "in"       ~ !(ASCII_ALPHANUMERIC | "_") }
+contains_kw = @{ "contains" ~ !(ASCII_ALPHANUMERIC | "_") }
+is_kw       = @{ "is"       ~ !(ASCII_ALPHANUMERIC | "_") }
+as_kw       = @{ "as"       ~ !(ASCII_ALPHANUMERIC | "_") }
+
+// ── Literals ───────────────────────────────────────────────────────────────
+literal = _{ bool_lit | quantity_lit | decimal_lit | integer_lit | datetime_lit | date_lit | time_lit | string_lit | null_lit }
+
+null_lit    = { "{}" }
+bool_lit    = { "true" | "false" }
+
+string_lit  = @{ "'" ~ string_char* ~ "'" }
+string_char = _{ !("'" | "\\") ~ ANY | "\\" ~ ("'" | "\\" | "n" | "r" | "t" | "u" ~ ASCII_HEX_DIGIT{4}) }
+
+// Dates and times (FHIR temporal literals)
+datetime_lit = @{ "@" ~ date_part ~ "T" ~ time_part ~ timezone? }
+date_lit     = @{ "@" ~ date_part }
+time_lit     = @{ "@T" ~ time_part }
+
+date_part = @{ ASCII_DIGIT{4} ~ ("-" ~ ASCII_DIGIT{2} ~ ("-" ~ ASCII_DIGIT{2})?)? }
+time_part = @{ ASCII_DIGIT{2} ~ ":" ~ ASCII_DIGIT{2} ~ (":" ~ ASCII_DIGIT{2} ~ ("." ~ ASCII_DIGIT+)?)? }
+timezone  = @{ "Z" | ("+" | "-") ~ ASCII_DIGIT{2} ~ ":" ~ ASCII_DIGIT{2} }
+
+// Quantity: number followed by unit string — try before decimal/integer
+quantity_lit = @{ (decimal_num | integer_num) ~ " "+ ~ "'" ~ string_char* ~ "'" }
+
+decimal_lit  = { decimal_num }
+integer_lit  = { integer_num }
+
+decimal_num  = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+integer_num  = @{ ASCII_DIGIT+ }
+
+// ── Identifiers ────────────────────────────────────────────────────────────
+ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }

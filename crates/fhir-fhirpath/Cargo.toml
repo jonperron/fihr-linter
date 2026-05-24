@@ -9,10 +9,13 @@ repository.workspace  = true
 rust-version.workspace = true
 
 [dependencies]
-pest        = { workspace = true }
-pest_derive = { workspace = true }
-thiserror   = { workspace = true }
-serde_json  = { workspace = true }
+pest             = { workspace = true }
+pest_derive      = { workspace = true }
+thiserror        = { workspace = true }
+serde_json       = { workspace = true }
+indexmap         = { workspace = true }
+fhir-parser      = { workspace = true }
+regex-lite       = { workspace = true }
 
 [dev-dependencies]
 rstest   = { workspace = true }

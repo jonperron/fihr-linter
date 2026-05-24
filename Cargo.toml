@@ -30,6 +30,9 @@ quick-xml   = { version = "0.37", features = ["serialize"] }
 pest        = "2"
 pest_derive = "2"
 
+# Regex
+regex-lite  = "0.1"
+
 # Collections
 indexmap    = { version = "2", features = ["serde"] }
 
