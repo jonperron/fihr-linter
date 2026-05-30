@@ -14,6 +14,8 @@ pub enum Value {
     Null,
     Bool(bool),
     Integer(i64),
+    /// FHIRPath 3.0 64-bit integer (distinct from Integer for type-system purposes).
+    Long(i64),
     Decimal(f64),
     String(Arc<str>),
     /// ISO date/time/dateTime string (kept as string for comparison).
@@ -41,6 +43,7 @@ impl Value {
             Value::Null => "null",
             Value::Bool(_) => "Boolean",
             Value::Integer(_) => "Integer",
+            Value::Long(_) => "Long",
             Value::Decimal(_) => "Decimal",
             Value::String(_) => "String",
             Value::Date(_) => "Date",
@@ -60,19 +63,27 @@ impl Value {
         }
     }
 
-    /// Coerce to `f64` (Integer or Decimal).
+    /// Coerce to `f64` (Integer, Long, or Decimal).
     pub fn as_decimal(&self) -> Option<f64> {
         match self {
-            Value::Integer(n) => Some(*n as f64),
+            Value::Integer(n) | Value::Long(n) => Some(*n as f64),
             Value::Decimal(d) => Some(*d),
             _ => None,
         }
     }
 
-    /// Coerce to `i64` only for Integer values.
+    /// Coerce to `i64` only for Integer values (not Long).
     pub fn as_integer(&self) -> Option<i64> {
         match self {
             Value::Integer(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    /// Coerce to `i64` for Long values (not Integer).
+    pub fn as_long(&self) -> Option<i64> {
+        match self {
+            Value::Long(n) => Some(*n),
             _ => None,
         }
     }
@@ -84,6 +95,7 @@ impl fmt::Display for Value {
             Value::Null => write!(f, "null"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::Integer(n) => write!(f, "{n}"),
+            Value::Long(n) => write!(f, "{n}"),
             Value::Decimal(d) => write!(f, "{d}"),
             Value::String(s) => write!(f, "{s}"),
             Value::Date(s) | Value::DateTime(s) | Value::Time(s) => write!(f, "{s}"),

@@ -1,4 +1,4 @@
-/// Abstract Syntax Tree for FHIRPath 2.0 expressions.
+/// Abstract Syntax Tree for FHIRPath 3.0 expressions.
 ///
 /// The AST is produced by `parser::parse` and consumed by `eval::Evaluator`.
 /// A FHIRPath expression node.
@@ -8,6 +8,8 @@ pub enum Expr {
     Null,
     Bool(bool),
     Integer(i64),
+    /// FHIRPath 3.0 Long literal (e.g. `45L`).
+    Long(i64),
     Decimal(f64),
     /// String literal (single-quoted in FHIRPath).
     String(String),
