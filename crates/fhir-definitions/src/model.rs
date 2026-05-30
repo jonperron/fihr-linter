@@ -19,6 +19,28 @@ pub struct ElementDefinition {
     /// Either `"*"` or a non-negative integer represented as a string.
     pub max: Arc<str>,
     pub types: Vec<Arc<str>>,
+    /// FHIRPath constraint expressions defined on this element.
+    pub constraints: Vec<Constraint>,
+    /// Terminology binding, if any.
+    pub binding: Option<Binding>,
+}
+
+/// A FHIRPath constraint expression on an element.
+#[derive(Debug, Clone)]
+pub struct Constraint {
+    pub key: Arc<str>,
+    /// Either `"error"` or `"warning"`.
+    pub severity: Arc<str>,
+    pub human: Arc<str>,
+    /// FHIRPath expression; absent for extension-only constraints.
+    pub expression: Option<Arc<str>>,
+}
+
+/// A terminology binding on an element.
+#[derive(Debug, Clone)]
+pub struct Binding {
+    pub strength: Arc<str>,
+    pub value_set: Option<Arc<str>>,
 }
 
 /// A lightweight ValueSet (url + name only; compose details are looked up on demand).

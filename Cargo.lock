@@ -360,6 +360,7 @@ dependencies = [
  "fhir-definitions",
  "fhir-fhirpath",
  "fhir-parser",
+ "indexmap",
  "proptest",
  "rstest",
  "thiserror",

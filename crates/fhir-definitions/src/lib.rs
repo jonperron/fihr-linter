@@ -8,7 +8,9 @@ mod loader;
 mod model;
 mod registry;
 
-pub use model::{CodeSystem, ElementDefinition, StructureDefinition, ValueSet};
+pub use model::{
+    Binding, CodeSystem, Constraint, ElementDefinition, StructureDefinition, ValueSet,
+};
 pub use registry::Registry;
 
 use thiserror::Error;

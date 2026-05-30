@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::model::{CodeSystem, ElementDefinition, StructureDefinition, ValueSet};
+use crate::model::{
+    Binding, CodeSystem, Constraint, ElementDefinition, StructureDefinition, ValueSet,
+};
 use crate::{Error, Result};
 
 /// Parse a FHIR Bundle JSON file and populate the given maps with any
@@ -92,11 +94,46 @@ fn parse_element_definition(elem: &Value) -> Option<ElementDefinition> {
         })
         .unwrap_or_default();
 
+    let constraints = elem["constraint"]
+        .as_array()
+        .map(|list| list.iter().filter_map(parse_constraint).collect())
+        .unwrap_or_default();
+
+    let binding = parse_binding(&elem["binding"]);
+
     Some(ElementDefinition {
         path,
         min,
         max,
         types,
+        constraints,
+        binding,
+    })
+}
+
+fn parse_constraint(c: &Value) -> Option<Constraint> {
+    let key: Arc<str> = c["key"].as_str()?.into();
+    let severity: Arc<str> = c["severity"].as_str()?.into();
+    let human: Arc<str> = c["human"].as_str()?.into();
+    let expression = c["expression"].as_str().map(Arc::from);
+    Some(Constraint {
+        key,
+        severity,
+        human,
+        expression,
+    })
+}
+
+fn parse_binding(b: &Value) -> Option<Binding> {
+    let strength: Arc<str> = b["strength"].as_str()?.into();
+    let value_set = b["valueSet"].as_str().map(|s| {
+        // Strip version suffix (e.g. "http://...ValueSet/foo|5.0.0" → "http://...ValueSet/foo")
+        let s = s.split('|').next().unwrap_or(s);
+        Arc::from(s)
+    });
+    Some(Binding {
+        strength,
+        value_set,
     })
 }
 
