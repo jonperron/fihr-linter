@@ -49,6 +49,7 @@ fn build_expr(pair: Pair<Rule>) -> Result<Expr, ParseError> {
         Rule::null_lit => Ok(Expr::Null),
         Rule::bool_lit => Ok(Expr::Bool(pair.as_str() == "true")),
         Rule::integer_lit => parse_integer(pair),
+        Rule::long_lit => parse_long(pair),
         Rule::decimal_lit => parse_decimal(pair),
         Rule::string_lit => Ok(Expr::String(unescape_string(pair.as_str()))),
         Rule::date_lit => Ok(Expr::Temporal(TemporalKind::Date, trim_at(pair.as_str()))),
@@ -316,6 +317,14 @@ fn parse_integer(pair: Pair<Rule>) -> Result<Expr, ParseError> {
     s.parse::<i64>()
         .map(Expr::Integer)
         .map_err(|_| ParseError::Syntax(format!("invalid integer: {s}")))
+}
+
+fn parse_long(pair: Pair<Rule>) -> Result<Expr, ParseError> {
+    let raw = pair.as_str();
+    let s = raw.trim_end_matches('L');
+    s.parse::<i64>()
+        .map(Expr::Long)
+        .map_err(|_| ParseError::Syntax(format!("invalid long literal: {raw}")))
 }
 
 fn parse_decimal(pair: Pair<Rule>) -> Result<Expr, ParseError> {

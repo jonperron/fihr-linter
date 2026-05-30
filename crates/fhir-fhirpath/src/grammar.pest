@@ -1,5 +1,5 @@
-// FHIRPath 2.0 Grammar (PEG via pest)
-// Reference: https://hl7.org/fhirpath/
+// FHIRPath 3.0 Grammar (PEG via pest)
+// Reference: https://build.fhir.org/ig/HL7/FHIRPath/en/
 
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 COMMENT    = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" | "//" ~ (!"\n" ~ ANY)* }
@@ -85,7 +85,7 @@ is_kw       = @{ "is"       ~ !(ASCII_ALPHANUMERIC | "_") }
 as_kw       = @{ "as"       ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // ── Literals ───────────────────────────────────────────────────────────────
-literal = _{ bool_lit | quantity_lit | decimal_lit | integer_lit | datetime_lit | date_lit | time_lit | string_lit | null_lit }
+literal = _{ bool_lit | quantity_lit | decimal_lit | long_lit | integer_lit | datetime_lit | date_lit | time_lit | string_lit | null_lit }
 
 null_lit    = { "{}" }
 bool_lit    = { "true" | "false" }
@@ -94,7 +94,8 @@ string_lit  = @{ "'" ~ string_char* ~ "'" }
 string_char = _{ !("'" | "\\") ~ ANY | "\\" ~ ("'" | "\\" | "n" | "r" | "t" | "u" ~ ASCII_HEX_DIGIT{4}) }
 
 // Dates and times (FHIR temporal literals)
-datetime_lit = @{ "@" ~ date_part ~ "T" ~ time_part ~ timezone? }
+// datetime_lit matches both full (T with time) and partial (T alone, e.g. @2014T).
+datetime_lit = @{ "@" ~ date_part ~ "T" ~ (time_part ~ timezone?)? }
 date_lit     = @{ "@" ~ date_part }
 time_lit     = @{ "@T" ~ time_part }
 
@@ -106,6 +107,8 @@ timezone  = @{ "Z" | ("+" | "-") ~ ASCII_DIGIT{2} ~ ":" ~ ASCII_DIGIT{2} }
 quantity_lit = @{ (decimal_num | integer_num) ~ " "+ ~ "'" ~ string_char* ~ "'" }
 
 decimal_lit  = { decimal_num }
+// long_lit must come before integer_lit so that '45L' is not consumed as integer '45'.
+long_lit     = @{ ASCII_DIGIT+ ~ "L" }
 integer_lit  = { integer_num }
 
 decimal_num  = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }

@@ -1,4 +1,6 @@
 /// Unit tests for the FHIRPath parser and evaluator.
+///
+/// Tests are grouped by feature area. FHIRPath 3.0 additions are annotated.
 use std::sync::Arc;
 
 use indexmap::IndexMap;
@@ -1796,9 +1798,17 @@ fn substring_negative_start_returns_empty() {
 }
 
 #[test]
-fn substring_negative_length_returns_empty() {
+fn substring_negative_length_returns_empty_string() {
+    // FHIRPath 3.0: negative length yields '' (empty string), not {} (empty collection)
     let result = evaluate("'hello'.substring(0, -1)", &[]).unwrap();
-    assert_eq!(result, vec![]);
+    assert_eq!(result, vec![Value::String(Arc::from(""))]);
+}
+
+#[test]
+fn substring_zero_length_returns_empty_string() {
+    // FHIRPath 3.0: zero length also yields '' (empty string)
+    let result = evaluate("'hello'.substring(0, 0)", &[]).unwrap();
+    assert_eq!(result, vec![Value::String(Arc::from(""))]);
 }
 
 #[test]
@@ -1945,4 +1955,269 @@ fn mod_by_zero_returns_error() {
 fn div_by_zero_returns_error() {
     let err = evaluate("5 div 0", &[]).unwrap_err();
     assert!(matches!(err, fhir_fhirpath::EvalError::DivisionByZero));
+}
+
+// ── FHIRPath 3.0 — Long type ──────────────────────────────────────────────────
+
+#[test]
+fn long_literal_parsed_as_long_value() {
+    let result = evaluate("45L", &[]).unwrap();
+    assert_eq!(result, vec![Value::Long(45)]);
+}
+
+#[test]
+fn long_zero_literal() {
+    let result = evaluate("0L", &[]).unwrap();
+    assert_eq!(result, vec![Value::Long(0)]);
+}
+
+#[test]
+fn long_negated() {
+    let result = evaluate("-5L", &[]).unwrap();
+    assert_eq!(result, vec![Value::Long(-5)]);
+}
+
+#[test]
+fn long_arithmetic_long_plus_long() {
+    let result = evaluate("3L + 4L", &[]).unwrap();
+    assert_eq!(result, vec![Value::Long(7)]);
+}
+
+#[test]
+fn long_equality_with_integer() {
+    let result = evaluate("5L = 5", &[]).unwrap();
+    assert_eq!(result, vec![Value::Bool(true)]);
+}
+
+#[test]
+fn to_long_from_integer() {
+    let result = evaluate("42.toLong()", &[]).unwrap();
+    assert_eq!(result, vec![Value::Long(42)]);
+}
+
+#[test]
+fn to_long_from_string() {
+    let result = evaluate("'99'.toLong()", &[]).unwrap();
+    assert_eq!(result, vec![Value::Long(99)]);
+}
+
+#[test]
+fn to_long_from_invalid_string_returns_empty() {
+    let result = evaluate("'abc'.toLong()", &[]).unwrap();
+    assert_eq!(result, vec![]);
+}
+
+#[test]
+fn converts_to_long_true_for_integer() {
+    let result = evaluate("42.convertsToLong()", &[]).unwrap();
+    assert_eq!(result, vec![Value::Bool(true)]);
+}
+
+#[test]
+fn converts_to_long_false_for_decimal() {
+    let result = evaluate("3.14.convertsToLong()", &[]).unwrap();
+    assert_eq!(result, vec![Value::Bool(false)]);
+}
+
+// ── FHIRPath 3.0 — partial DateTime with T suffix ────────────────────────────
+
+#[test]
+fn partial_datetime_year_t() {
+    let result = evaluate("@2014T", &[]).unwrap();
+    assert_eq!(result, vec![Value::DateTime(Arc::from("2014T"))]);
+}
+
+#[test]
+fn partial_datetime_year_month_t() {
+    let result = evaluate("@2014-01T", &[]).unwrap();
+    assert_eq!(result, vec![Value::DateTime(Arc::from("2014-01T"))]);
+}
+
+#[test]
+fn partial_datetime_full_date_t() {
+    let result = evaluate("@2014-03-25T", &[]).unwrap();
+    assert_eq!(result, vec![Value::DateTime(Arc::from("2014-03-25T"))]);
+}
+
+// ── FHIRPath 3.0 — matches() / replaceMatches() flags ────────────────────────
+
+#[test]
+fn matches_case_insensitive_flag() {
+    let result = evaluate("'Hello'.matches('hello', 'i')", &[]).unwrap();
+    assert_eq!(result, vec![Value::Bool(true)]);
+}
+
+#[test]
+fn matches_without_flag_is_case_sensitive() {
+    let result = evaluate("'Hello'.matches('hello')", &[]).unwrap();
+    assert_eq!(result, vec![Value::Bool(false)]);
+}
+
+#[test]
+fn replace_matches_case_insensitive() {
+    let result = evaluate("'Hello World'.replaceMatches('hello', 'Hi', 'i')", &[]).unwrap();
+    assert_eq!(result, vec![Value::String(Arc::from("Hi World"))]);
+}
+
+// ── FHIRPath 3.0 — matchesFull ───────────────────────────────────────────────
+
+#[test]
+fn matches_full_exact_match() {
+    let result = evaluate("'hello'.matchesFull('hello')", &[]).unwrap();
+    assert_eq!(result, vec![Value::Bool(true)]);
+}
+
+#[test]
+fn matches_full_partial_fails() {
+    let result = evaluate("'hello world'.matchesFull('hello')", &[]).unwrap();
+    assert_eq!(result, vec![Value::Bool(false)]);
+}
+
+#[test]
+fn matches_full_with_pattern() {
+    let result = evaluate("'abc123'.matchesFull('[a-z]+[0-9]+')", &[]).unwrap();
+    assert_eq!(result, vec![Value::Bool(true)]);
+}
+
+#[test]
+fn matches_full_case_insensitive_flag() {
+    let result = evaluate("'HELLO'.matchesFull('hello', 'i')", &[]).unwrap();
+    assert_eq!(result, vec![Value::Bool(true)]);
+}
+
+// ── FHIRPath 3.0 — lastIndexOf ───────────────────────────────────────────────
+
+#[test]
+fn last_index_of_found() {
+    let result = evaluate("'abcabc'.lastIndexOf('b')", &[]).unwrap();
+    assert_eq!(result, vec![Value::Integer(4)]);
+}
+
+#[test]
+fn last_index_of_not_found() {
+    let result = evaluate("'hello'.lastIndexOf('z')", &[]).unwrap();
+    assert_eq!(result, vec![Value::Integer(-1)]);
+}
+
+#[test]
+fn last_index_of_single_occurrence() {
+    let result = evaluate("'hello'.lastIndexOf('e')", &[]).unwrap();
+    assert_eq!(result, vec![Value::Integer(1)]);
+}
+
+// ── FHIRPath 3.0 — combine ───────────────────────────────────────────────────
+
+#[test]
+fn combine_concatenates_with_duplicates() {
+    // combine() keeps duplicates (unlike union/|)
+    let result = evaluate("(1 | 2).combine(2 | 3)", &[]).unwrap();
+    assert_eq!(
+        result,
+        vec![
+            Value::Integer(1),
+            Value::Integer(2),
+            Value::Integer(2),
+            Value::Integer(3)
+        ]
+    );
+}
+
+// ── FHIRPath 3.0 — coalesce ──────────────────────────────────────────────────
+
+#[test]
+fn coalesce_returns_first_non_empty() {
+    let result = evaluate("coalesce({}, 'second', 'third')", &[]).unwrap();
+    assert_eq!(result, vec![Value::String(Arc::from("second"))]);
+}
+
+#[test]
+fn coalesce_all_empty_returns_empty() {
+    let result = evaluate("coalesce({}, {})", &[]).unwrap();
+    assert_eq!(result, vec![]);
+}
+
+#[test]
+fn coalesce_first_non_empty() {
+    let result = evaluate("coalesce(42)", &[]).unwrap();
+    assert_eq!(result, vec![Value::Integer(42)]);
+}
+
+// ── FHIRPath 3.0 — avg ───────────────────────────────────────────────────────
+
+#[test]
+fn avg_integers() {
+    let result = evaluate("(1 | 3 | 5).avg()", &[]).unwrap();
+    assert_eq!(result, vec![Value::Decimal(3.0)]);
+}
+
+#[test]
+fn avg_empty_returns_empty() {
+    let result = evaluate("{}.avg()", &[]).unwrap();
+    assert_eq!(result, vec![]);
+}
+
+// ── FHIRPath 3.0 — sort ──────────────────────────────────────────────────────
+
+#[test]
+fn sort_integers_ascending() {
+    let result = evaluate("(3 | 1 | 2).sort()", &[]).unwrap();
+    assert_eq!(
+        result,
+        vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+    );
+}
+
+#[test]
+fn sort_strings_alphabetically() {
+    let result = evaluate("('banana' | 'apple' | 'cherry').sort()", &[]).unwrap();
+    assert_eq!(
+        result,
+        vec![
+            Value::String(Arc::from("apple")),
+            Value::String(Arc::from("banana")),
+            Value::String(Arc::from("cherry")),
+        ]
+    );
+}
+
+// ── FHIRPath 3.0 — escape / unescape ─────────────────────────────────────────
+
+#[test]
+fn escape_html_entities() {
+    let result = evaluate("'<b>hello & \"world\"</b>'.escape('html')", &[]).unwrap();
+    assert_eq!(
+        result,
+        vec![Value::String(Arc::from(
+            "&lt;b&gt;hello &amp; &quot;world&quot;&lt;/b&gt;"
+        ))]
+    );
+}
+
+#[test]
+fn unescape_html_entities() {
+    let result = evaluate(
+        "'&lt;b&gt;hello &amp; world&lt;/b&gt;'.unescape('html')",
+        &[],
+    )
+    .unwrap();
+    assert_eq!(
+        result,
+        vec![Value::String(Arc::from("<b>hello & world</b>"))]
+    );
+}
+
+#[test]
+fn escape_json_string() {
+    // FHIRPath '\n' in a string literal is an actual newline character.
+    // After JSON escaping, the newline becomes the two-char sequence \n.
+    let result = evaluate(r#"'hello\nworld'.escape('json')"#, &[]).unwrap();
+    assert_eq!(result, vec![Value::String(Arc::from("hello\\nworld"))]);
+}
+
+#[test]
+fn unescape_json_string() {
+    // FHIRPath '\\n' is a literal backslash followed by n.
+    // JSON-unescaping backslash+n yields an actual newline character.
+    let result = evaluate(r#"'hello\\nworld'.unescape('json')"#, &[]).unwrap();
+    assert_eq!(result, vec![Value::String(Arc::from("hello\nworld"))]);
 }
