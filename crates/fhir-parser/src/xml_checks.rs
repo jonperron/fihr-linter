@@ -252,18 +252,17 @@ pub(crate) fn div_has_control_reference(div: &str) -> bool {
 /// With an extension or element id (`<id value=".."><extension/></id>`) the rest stays as
 /// an `id` primitive object without `value`, which the validator reshapes into `_id` like
 /// any other primitive. The attribute shares its element's offset; a `<value>` child
-/// element does not, so it stays in the object for the validator to report.
-// shortcut: Resource has no span for the lifted id, so a trimmed resource id gets no
-// TYPE_007; add one when the validator's Resource constructors can change with it.
+/// element does not, so it stays in the object for the validator to report. Returns the
+/// id with the `<id>` element's span.
 pub(crate) fn lift_resource_id(
     fields: &mut IndexMap<Arc<str>, Node>,
     line_index: &LineIndex,
-) -> Result<Option<Arc<str>>, ParseError> {
+) -> Result<Option<(Arc<str>, Span)>, ParseError> {
     let Some((index, key, node)) = fields.shift_remove_full("id") else {
         return Ok(None);
     };
     let mut parts = match node.value {
-        Value::Str(id) => return Ok(Some(id)),
+        Value::Str(id) => return Ok(Some((id, node.span))),
         Value::Object(parts) => parts,
         _ => IndexMap::new(),
     };
@@ -293,5 +292,5 @@ pub(crate) fn lift_resource_id(
         };
         fields.shift_insert(index, key, rest);
     }
-    Ok(id)
+    Ok(id.map(|id| (id, node.span)))
 }

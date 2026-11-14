@@ -9,14 +9,16 @@
 //! The reshape also checks the XML form of each element: elements whose `representation`
 //! is `xmlAttr` (a primitive's `value`, `Element.id`, `Extension.url`) must be attributes,
 //! every other element a child element. The parser gives an attribute its element's span
-//! and a child element its own, which is how the two are told apart.
+//! and a child element its own, which is how the two are told apart. Child elements must
+//! follow snapshot order (xml.html); their spans give the written order back after the
+//! parser grouped repeated siblings, and `STRUCTURE_004` reports each one out of place.
 //!
 //! The parser trims attribute values (xml.html: readers SHOULD trim); each trimmed value of
 //! a known element gets a `TYPE_007` Warning here, where its instance path is known
 //! (user decision 11.7: trim and warn rather than report the whitespace as an error).
 
 use fhir_definitions::{Registry, StructureDefinition};
-use fhir_parser::{Node, Resource, Value};
+use fhir_parser::{Node, Resource, Span, TrimmedAttribute, Value};
 use indexmap::IndexMap;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -40,7 +42,10 @@ pub(crate) fn to_json_shape(
         trimmed: resource
             .trimmed_attributes
             .iter()
-            .map(|(offset, name)| (*offset, name.as_ref()))
+            .filter_map(|trimmed| match trimmed {
+                TrimmedAttribute::Element(offset, name) => Some((*offset, name.as_ref())),
+                TrimmedAttribute::ResourceId(_) => None,
+            })
             .collect(),
         // xml.html 2.1.6.3.4: content SHALL NOT "even contain the schema instance namespace".
         diagnostics: resource
@@ -56,6 +61,11 @@ pub(crate) fn to_json_shape(
             })
             .collect(),
     };
+    for trimmed in &resource.trimmed_attributes {
+        if let TrimmedAttribute::ResourceId(span) = trimmed {
+            shaper.trimmed_warning(&format!("{name}.id"), *span);
+        }
+    }
     // The parser rejects attributes on the root, so its fields have no parent offset.
     let fields = shaper.fields(&resource.fields, sd, name, name, None);
     let reshaped = Resource {
@@ -99,9 +109,15 @@ impl Shaper<'_> {
     ) -> Fields {
         let prefix = format!("{def_path}.");
         let mut out = Fields::with_capacity(fields.len());
+        // Child elements as (span, snapshot position, path); attributes have no order.
+        let mut siblings = Vec::new();
         for (name, node) in fields {
-            let found = resolve(sd, &format!("{prefix}{name}"), name)
-                .and_then(|(elem, ty)| typed_element(self.registry, sd, elem, ty));
+            let resolved = resolve(sd, &format!("{prefix}{name}"), name);
+            // A choice variant resolves to its `[x]` element, so it takes that element's place.
+            let position = resolved
+                .as_ref()
+                .and_then(|(elem, _)| sd.snapshot.iter().position(|e| std::ptr::eq(e, *elem)));
+            let found = resolved.and_then(|(elem, ty)| typed_element(self.registry, sd, elem, ty));
             let Some((elem, sd, ty)) = found else {
                 out.insert(Arc::clone(name), node.clone());
                 continue;
@@ -109,6 +125,9 @@ impl Shaper<'_> {
             let child_path = format!("{path}.{name}");
             for (item, item_path) in items(node, &child_path) {
                 self.check_form(item, name, elem.xml_attr, parent, &item_path);
+                if let Some(position) = position.filter(|_| parent != Some(item.span.offset)) {
+                    siblings.push((item.span, position, item_path));
+                }
             }
             if holds_resource(&ty, self.registry) {
                 out.insert(Arc::clone(name), self.embedded(node, &child_path));
@@ -154,7 +173,33 @@ impl Shaper<'_> {
             };
             out.insert(Arc::clone(name), reshaped);
         }
+        self.check_order(siblings);
         out
+    }
+
+    /// `STRUCTURE_004` for each child element written after a sibling that the snapshot
+    /// lists later (xml.html: "Elements must always appear in the order documented").
+    fn check_order(&mut self, mut siblings: Vec<(Span, usize, String)>) {
+        siblings.sort_by_key(|(span, ..)| span.offset);
+        let mut latest: Option<(usize, &str)> = None;
+        for (span, position, path) in &siblings {
+            match latest {
+                Some((latest_position, latest_path)) if *position < latest_position => {
+                    self.diagnostics.push(
+                        Diagnostic::error(
+                            "STRUCTURE_004",
+                            format!(
+                                "Element '{path}' is out of order: it must come before \
+                                 '{latest_path}'"
+                            ),
+                            path.clone(),
+                        )
+                        .with_location(*span),
+                    );
+                }
+                _ => latest = Some((*position, path)),
+            }
+        }
     }
 
     /// Unwrap the resources of an element typed `Resource` (references.html: XML
@@ -247,16 +292,19 @@ impl Shaper<'_> {
     /// `TYPE_007` Warning when the parser trimmed attribute `name` of the element at
     /// `node`'s offset.
     fn warn_if_trimmed(&mut self, node: &Node, name: &str, path: &str) {
-        if !self.trimmed.contains(&(node.span.offset, name)) {
-            return;
+        if self.trimmed.contains(&(node.span.offset, name)) {
+            self.trimmed_warning(path, node.span);
         }
+    }
+
+    fn trimmed_warning(&mut self, path: &str, span: Span) {
         self.diagnostics.push(
             Diagnostic::warning(
                 "TYPE_007",
                 format!("Leading or trailing whitespace trimmed from the XML value at '{path}'"),
                 path.to_owned(),
             )
-            .with_location(node.span),
+            .with_location(span),
         );
     }
 

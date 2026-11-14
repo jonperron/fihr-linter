@@ -54,12 +54,21 @@ pub struct Resource {
     pub id: Option<Arc<str>>,
     pub fields: IndexMap<Arc<str>, Node>,
     /// XML attribute values the reader trimmed (xml.html: readers SHOULD trim leading and
-    /// trailing whitespace), as the owning element's byte offset and the attribute name.
-    /// Empty for JSON.
-    pub trimmed_attributes: Vec<(u32, Arc<str>)>,
+    /// trailing whitespace). Empty for JSON.
+    pub trimmed_attributes: Vec<TrimmedAttribute>,
     /// XML elements that declare or use the schema instance namespace, which xml.html
     /// 2.1.6.3.4 forbids; the validator reports each one. Empty for JSON.
     pub schema_instance: Vec<Span>,
+}
+
+/// An XML attribute value the reader trimmed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrimmedAttribute {
+    /// Attribute `name` of the element at this byte offset.
+    Element(u32, Arc<str>),
+    /// The `value` of the root `<id>` element, lifted into [`Resource::id`]: the span of
+    /// that `<id>`, which no node in `fields` keeps.
+    ResourceId(Span),
 }
 
 /// Errors produced by the parser.
