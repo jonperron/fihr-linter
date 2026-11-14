@@ -285,6 +285,7 @@ impl Evaluator<'_> {
                 for (index, item) in focus.iter().enumerate() {
                     let step = Evaluator {
                         total: Some(&total),
+                        variables: self.variables.clone(),
                         ..*self
                     };
                     total = step.eval_item(&args[0], item, index)?;

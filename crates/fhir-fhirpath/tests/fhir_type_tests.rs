@@ -185,3 +185,30 @@ fn without_the_hook_a_fhir_string_subtype_is_an_error() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn an_unknown_type_name_is_an_error() -> TestResult {
+    // testFHIRPathAsFunction23/24: `string1` is neither a FHIR nor a System type.
+    for expression in [
+        "Questionnaire.status.as(string1)",
+        "Questionnaire.status.ofType(string1)",
+        "Questionnaire.status.is(string1)",
+        "Questionnaire.status is string1",
+        "Questionnaire as Questionnaire1",
+    ] {
+        let error = eval(expression, true).err();
+        let error = error.as_deref().and_then(|e| e.downcast_ref::<EvalError>());
+        assert!(
+            matches!(error, Some(EvalError::Type(_))),
+            "{expression}: {error:?}"
+        );
+    }
+    // Known types still answer: a resource type and a FHIR complex type.
+    assert_eq!(
+        eval("Questionnaire.is(Questionnaire)", true)?,
+        [Value::Bool(true)]
+    );
+    assert_eq!(eval("Questionnaire.status.ofType(HumanName)", true)?, []);
+    assert!(eval("Questionnaire.status.is(Any)", true).is_ok());
+    Ok(())
+}
