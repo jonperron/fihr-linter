@@ -1,5 +1,5 @@
 use fhir_definitions::{ElementDefinition, Registry, StructureDefinition};
-use fhir_fhirpath::{Collection, Value as FhirPathValue};
+use fhir_fhirpath::{Collection, Environment, Value as FhirPathValue};
 use fhir_parser::{Node, Resource, Span, Value};
 use indexmap::IndexMap;
 use std::cell::RefCell;
@@ -14,8 +14,12 @@ use crate::type_check::{check_type, is_valid_id};
 use crate::{invariants, references, terminology};
 
 /// What every level of the walk shares.
-struct Walk<'a> {
+struct Walk<'a, 'e> {
     registry: &'a Registry,
+    /// `%resource`, `%rootResource` and FHIR type inheritance for every invariant.
+    environment: &'e Environment<'e>,
+    /// This resource's `%rootResource`, which is also the one of the resources it contains.
+    root_resource: &'e FhirPathValue,
     /// JSON input: array shapes are meaningful (`STRUCTURE_002`).
     json: bool,
     /// Where `#id` references resolve (see [`Embedded::container_ids`]).
@@ -41,6 +45,7 @@ struct Walk<'a> {
 /// every Quantity), once per key. The root's own invariants and the profile layer run
 /// outside the walk. `root` is the resource's FHIRPath value (`resource_to_typed_value`);
 /// each object's part of it is handed down the walk, so the tree is converted once.
+/// `environment` evaluates every invariant (`%resource` is `root`).
 ///
 /// A `contentReference` can refer to its own ancestor (`Questionnaire.item.item`); the
 /// recursion follows the instance data, which the parsers cap at `MAX_DEPTH` levels.
@@ -48,6 +53,7 @@ struct Walk<'a> {
 pub(crate) fn validate<'a>(
     resource: &Resource,
     root: &FhirPathValue,
+    environment: &Environment<'_>,
     sd: &StructureDefinition,
     registry: &'a Registry,
     json: bool,
@@ -75,6 +81,8 @@ pub(crate) fn validate<'a>(
     let in_contained = container_ids.is_some();
     let context = Walk {
         registry,
+        environment,
+        root_resource: environment.root_resource.unwrap_or(root),
         json,
         contained_ids: container_ids.unwrap_or_else(|| references::contained_ids(resource).into()),
         in_contained,
@@ -114,7 +122,7 @@ fn descend(
     elem: &ElementDefinition,
     ty: &str,
     sd: &StructureDefinition,
-    context: &Walk<'_>,
+    context: &Walk<'_, '_>,
     path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -155,7 +163,7 @@ fn descend(
                     &converted
                 }
             };
-            check_invariants(value, elem, ty, path, node.span, registry, diagnostics);
+            check_invariants(value, elem, ty, path, node.span, context, diagnostics);
             if ty == "Reference" {
                 references::check(
                     node,
@@ -180,7 +188,16 @@ fn descend(
                         diagnostics,
                     );
                     let node = (fields, value, node.span);
-                    check_type_profiles(node, elem, ty, path, registry, start, diagnostics);
+                    check_type_profiles(
+                        node,
+                        elem,
+                        ty,
+                        path,
+                        registry,
+                        context.environment,
+                        start,
+                        diagnostics,
+                    );
                 }
                 None => walk(fields, typed, sd, &elem.path, context, path, diagnostics),
             }
@@ -205,7 +222,7 @@ fn walk(
     typed: Option<&IndexMap<Arc<str>, Collection>>,
     sd: &StructureDefinition,
     def_path: &str,
-    context: &Walk<'_>,
+    context: &Walk<'_, '_>,
     path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -267,12 +284,13 @@ fn walk(
         if holds_resource(&ty, context.registry) {
             // references.html: only `DomainResource.contained` holds contained resources.
             let contained = name == "contained" && !def_path.contains('.');
-            let ids = contained.then_some(&context.contained_ids);
+            // A contained resource's `%rootResource` is the outermost container, like its ids.
+            let container = contained.then_some((&context.contained_ids, context.root_resource));
             let queue = &mut context.embedded.borrow_mut();
             embedded::queue(
                 node,
                 typed,
-                ids,
+                container,
                 context.registry,
                 &child_path,
                 queue,
@@ -328,7 +346,7 @@ fn check_primitive(
     elem: &ElementDefinition,
     ty: &str,
     path: &str,
-    context: &Walk<'_>,
+    context: &Walk<'_, '_>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     fn items(node: Option<&Node>) -> Vec<&Node> {
@@ -352,15 +370,7 @@ fn check_primitive(
             true => format!("{path}[{i}]"),
             false => path.to_owned(),
         };
-        check_invariants(
-            &typed,
-            elem,
-            ty,
-            &item_path,
-            span,
-            context.registry,
-            diagnostics,
-        );
+        check_invariants(&typed, elem, ty, &item_path, span, context, diagnostics);
     }
 }
 
@@ -389,9 +399,10 @@ fn check_invariants(
     ty: &str,
     path: &str,
     span: Span,
-    registry: &Registry,
+    context: &Walk<'_, '_>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    let registry = context.registry;
     // A JSON null or a value-less, extension-less item is no node to constrain.
     if value.is_empty() {
         return;
@@ -409,6 +420,7 @@ fn check_invariants(
             constraint,
             value,
             &|base, suffix| registry.is_choice_variant(base, suffix),
+            context.environment,
             path,
             Some(span),
             diagnostics,
@@ -420,7 +432,7 @@ fn check_invariants(
 /// for a repeating primitive), so its `id` and `extension` are validated.
 fn walk_primitive_extension(
     node: &Node,
-    context: &Walk<'_>,
+    context: &Walk<'_, '_>,
     path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {

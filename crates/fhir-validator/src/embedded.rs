@@ -25,6 +25,8 @@ pub(crate) struct Embedded<'a> {
     /// and `#` names the container (references.html, ref-1). `None` for a resource that is
     /// its own root (a Bundle entry), which resolves `#id` against its own `contained`.
     pub container_ids: Option<ContainedIds>,
+    /// For a contained resource, its container's FHIRPath value: `%rootResource`.
+    pub container: Option<FhirPathValue>,
 }
 
 /// The concrete resource StructureDefinition of `resource_type`, or the `STRUCTURE_000`
@@ -110,11 +112,12 @@ pub(crate) fn holds_resource(ty: &str, registry: &Registry) -> bool {
 
 /// Queue for validation each resource that `node` (an element typed `Resource`, instance
 /// `path`) holds. `typed` is its FHIRPath value as converted with its parent, when known;
-/// `container_ids` is set for `contained` (see [`Embedded::container_ids`]).
+/// `container` is set for `contained`: the ids and the value of the container (see
+/// [`Embedded::container_ids`] and [`Embedded::container`]).
 pub(crate) fn queue<'a>(
     node: &Node,
     typed: Option<&[FhirPathValue]>,
-    container_ids: Option<&ContainedIds>,
+    container: Option<(&ContainedIds, &FhirPathValue)>,
     registry: &'a Registry,
     path: &str,
     queue: &mut Vec<Embedded<'a>>,
@@ -198,7 +201,8 @@ pub(crate) fn queue<'a>(
             sd,
             path: item_path,
             // A resource contained in a contained one (dom-2) still resolves against the root.
-            container_ids: container_ids.cloned(),
+            container_ids: container.map(|(ids, _)| Arc::clone(ids)),
+            container: container.map(|(_, value)| value.clone()),
         });
     }
 }
@@ -258,11 +262,12 @@ mod tests {
         )?;
         let node = resource.fields.get("contained").ok_or("no contained")?;
         let ids: ContainedIds = crate::references::contained_ids(&resource).into();
+        let container = fhir_fhirpath::resource_to_value(&resource);
         let (mut queued, mut found) = (Vec::new(), Vec::new());
         queue(
             node,
             None,
-            Some(&ids),
+            Some((&ids, &container)),
             &registry,
             "Patient.contained",
             &mut queued,

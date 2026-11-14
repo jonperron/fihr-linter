@@ -1,5 +1,5 @@
 use fhir_definitions::{ElementDefinition, Registry, StructureDefinition};
-use fhir_fhirpath::Value as FhirPathValue;
+use fhir_fhirpath::{Environment, Value as FhirPathValue};
 use fhir_parser::{Node, Resource, Span, Value};
 use indexmap::IndexMap;
 use std::sync::Arc;
@@ -108,12 +108,15 @@ pub fn validate(
 /// one object (`fields`, its FHIRPath value and span): the profile root's own invariants
 /// (`sqty-1`) and its rules below the root ([`check_profile_object`]). The value must conform
 /// to one of them; findings the base walk of the node (from `start`) already made are dropped.
+/// `environment` evaluates the invariants.
+#[allow(clippy::too_many_arguments)] // the node, its definition, its place and the walk state
 pub(crate) fn check_type_profiles(
     (fields, value, span): (&IndexMap<Arc<str>, Node>, &[FhirPathValue], Span),
     elem: &ElementDefinition,
     ty: &str,
     path: &str,
     registry: &Registry,
+    environment: &Environment<'_>,
     start: usize,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
@@ -141,6 +144,7 @@ pub(crate) fn check_type_profiles(
                 constraint,
                 value,
                 &|base, suffix| registry.is_choice_variant(base, suffix),
+                environment,
                 path,
                 Some(span),
                 &mut found,

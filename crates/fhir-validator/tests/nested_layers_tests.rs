@@ -315,20 +315,20 @@ fn reference_choice_variant_in_an_extension_is_checked() -> TestResult {
 
 #[test]
 fn nested_skipped_constraint_names_the_node_path() -> TestResult {
-    // ref-1 needs %rootResource for a '#' reference, so it is skipped on the
-    // nested Reference, at its path.
+    // txt-1 calls htmlChecks(), which the evaluator does not implement, so it is
+    // skipped on the nested Narrative.div, at its path.
     let found = diagnostics(
-        r##"{"resourceType":"Patient","contact":[{"organization":
-        {"reference":"#x"}}]}"##,
+        r#"{"resourceType":"Patient","text":{"status":"generated",
+        "div":"<div xmlns=\"http://www.w3.org/1999/xhtml\">x</div>"}}"#,
     )?;
-    let ref_1 = found
+    let txt_1 = found
         .iter()
-        .find(|d| d.message.starts_with("constraint ref-1 not checked"))
-        .ok_or_else(|| format!("no ref-1 skip: {found:?}"))?;
-    assert_eq!(ref_1.code.as_ref(), "INVARIANT_SKIPPED");
-    assert_eq!(ref_1.severity, Severity::Information);
-    assert_eq!(ref_1.path, "Patient.contact[0].organization");
-    assert!(ref_1.location.is_some(), "{ref_1:?}");
+        .find(|d| d.message.starts_with("constraint txt-1 not checked"))
+        .ok_or_else(|| format!("no txt-1 skip: {found:?}"))?;
+    assert_eq!(txt_1.code.as_ref(), "INVARIANT_SKIPPED");
+    assert_eq!(txt_1.severity, Severity::Information);
+    assert_eq!(txt_1.path, "Patient.text.div");
+    assert!(txt_1.location.is_some(), "{txt_1:?}");
     Ok(())
 }
 

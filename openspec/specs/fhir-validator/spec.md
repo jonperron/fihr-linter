@@ -464,7 +464,7 @@ Les enfants `id` des éléments imbriqués SHALL être vérifiés comme `string`
 
 ### Requirement: Validation des invariants FHIRPath (INVARIANT_<key>)
 
-Le système SHALL évaluer les expressions FHIRPath de contrainte définies sur l'élément du snapshot de chaque nœud d'instance, ainsi que sur l'élément racine de son type, à toute profondeur (par ex. `qty-3` sur toute `Quantity`, `ext-1` sur toute `Extension`) ; chaque clé SHALL être évaluée une seule fois par nœud. Le `path` du Diagnostic SHALL être le chemin d'instance du nœud (ex. `Patient.contact[0]`) et sa localisation le span du nœud ; les contraintes de la ressource racine restent signalées au chemin du type de ressource, sans span. Un primitif SHALL être évalué avec son élément JSON `_nom`, appariés par indice ; un `_nom` sans valeur SHALL être évalué au chemin nu de l'élément (ex. `Patient.name[0].family`) ; le `_id` de la racine SHALL être apparié à l'`id` de la ressource, que le parseur extrait des champs ; un item JSON `null` n'est pas évalué. Chaque expression SHALL être analysée une seule fois par contrainte (cache). La ressource SHALL être convertie par `fhir_fhirpath::resource_to_typed_value` (racine) ou `fhir_fhirpath::node_to_typed_value` (nœuds imbriqués, même typage) avec `Registry::child_element`, de sorte que les primitives `date`, `dateTime`, `instant` et `time` soient comparées comme des valeurs temporelles. Pour chaque contrainte dont l'expression ne retourne pas `[true]` (une seule valeur vraie, y compris un booléen FHIR portant des extensions), il SHALL émettre un `Diagnostic` avec code `INVARIANT_<key>` où `<key>` est la valeur du champ `key` de la contrainte. Le code `INVARIANT_SKIPPED` est réservé : il signale une contrainte non vérifiée et n'est jamais une violation. La severity R5 d'une contrainte est liée (binding required) à constraint-severity (`error | warning`) : seule la valeur exacte `warning` SHALL donner `Severity::Warning` ; toute autre valeur (`error`, mais aussi `information`, `Warning` ou un code inconnu) SHALL donner `Severity::Error`.
+Le système SHALL évaluer les expressions FHIRPath de contrainte définies sur l'élément du snapshot de chaque nœud d'instance, ainsi que sur l'élément racine de son type, à toute profondeur (par ex. `qty-3` sur toute `Quantity`, `ext-1` sur toute `Extension`) ; chaque clé SHALL être évaluée une seule fois par nœud. Le `path` du Diagnostic SHALL être le chemin d'instance du nœud (ex. `Patient.contact[0]`) et sa localisation le span du nœud ; les contraintes de la ressource racine restent signalées au chemin du type de ressource, sans span. Un primitif SHALL être évalué avec son élément JSON `_nom`, appariés par indice ; un `_nom` sans valeur SHALL être évalué au chemin nu de l'élément (ex. `Patient.name[0].family`) ; le `_id` de la racine SHALL être apparié à l'`id` de la ressource, que le parseur extrait des champs ; un item JSON `null` n'est pas évalué. Chaque invariant (racine, imbriqué, profil de type) SHALL être évalué par `fhir_fhirpath::evaluate_parsed_with_environment` avec un `Environment` dont : `is_subtype` est construit depuis `Registry::type_ancestors` (`is`, `as` et `ofType` répondent pour les sous-types FHIR : `canonical` et `url` sont des `uri`, `code` est un `string`) ; `%resource` est la ressource englobant le nœud à toute profondeur (une ressource contenue ou une entrée de Bundle est son propre `%resource`) ; `%rootResource` est le conteneur le plus externe pour une ressource contenue, sinon `%resource` (une entrée de Bundle est sa propre racine). Une valeur sans type FHIR (élément inconnu, STRUCTURE_001/TYPE_001) interrogée sur un sous-type FHIR de `string` SHALL donner `INVARIANT_SKIPPED`. Chaque expression SHALL être analysée une seule fois par contrainte (cache). La ressource SHALL être convertie par `fhir_fhirpath::resource_to_typed_value` (racine) ou `fhir_fhirpath::node_to_typed_value` (nœuds imbriqués, même typage) avec `Registry::child_element`, de sorte que les primitives `date`, `dateTime`, `instant` et `time` soient comparées comme des valeurs temporelles. Pour chaque contrainte dont l'expression ne retourne pas `[true]` (une seule valeur vraie, y compris un booléen FHIR portant des extensions), il SHALL émettre un `Diagnostic` avec code `INVARIANT_<key>` où `<key>` est la valeur du champ `key` de la contrainte. Le code `INVARIANT_SKIPPED` est réservé : il signale une contrainte non vérifiée et n'est jamais une violation. La severity R5 d'une contrainte est liée (binding required) à constraint-severity (`error | warning`) : seule la valeur exacte `warning` SHALL donner `Severity::Warning` ; toute autre valeur (`error`, mais aussi `information`, `Warning` ou un code inconnu) SHALL donner `Severity::Error`.
 
 #### Scenario: Contrainte violée émet INVARIANT_<key>
 
@@ -492,10 +492,40 @@ Le système SHALL évaluer les expressions FHIRPath de contrainte définies sur 
 - **WHEN** l'évaluation d'une contrainte retourne `EvalError::StringTooLong` (chaîne construite de plus de 1 048 576 caractères)
 - **THEN** exactement un Diagnostic `Information` `INVARIANT_SKIPPED` nommant la `key` de la contrainte et « string longer than 1048576 characters » SHALL être émis
 
+#### Scenario: Sous-type FHIR reconnu par is/ofType
+
+- **WHEN** une `Patient` porte `extension` avec `valueCanonical` `#b` et `contained` une `Basic` d'`id` `b`
+- **THEN** `dom-3` (`ofType(canonical)` / `ofType(uri)`) SHALL être évaluée et ne produire aucun Diagnostic
+
+#### Scenario: dom-3 sur ressource contenue non référencée
+
+- **WHEN** une `Patient` contient une ressource `Basic` que rien ne référence
+- **THEN** un Diagnostic `INVARIANT_dom-3` de severity `Error` SHALL être émis au chemin `Patient`
+
+#### Scenario: ref-1 résolu contre le conteneur
+
+- **WHEN** une `Observation` contenue référence `#` (le conteneur) et `#b` (une sœur contenue)
+- **THEN** aucun Diagnostic `INVARIANT_ref-1` SHALL être émis
+
+#### Scenario: ref-1 sur contained manquant
+
+- **WHEN** une `Observation` contenue référence `#missing`
+- **THEN** un Diagnostic `INVARIANT_ref-1` SHALL être émis à `Patient.contained[0].subject`
+
+#### Scenario: Entrée de Bundle est sa propre racine
+
+- **WHEN** une `Observation` d'entrée de Bundle référence `#c` (son propre `contained`) et `#`
+- **THEN** `#c` SHALL être résolu, et `#` SHALL produire `INVARIANT_ref-1` à `Bundle.entry[0].resource.focus[0]`
+
+#### Scenario: Ressource contenue dans une entrée de Bundle
+
+- **WHEN** une `Patient` d'entrée de Bundle contient une `Observation` référençant `#`, `#b` et `#z`
+- **THEN** `%rootResource` SHALL être la `Patient` de l'entrée (pas le Bundle) et seul `#z` SHALL produire `INVARIANT_ref-1` à `Bundle.entry[0].resource.contained[0].focus[1]`
+
 #### Scenario: Expression non analysable signalée INVARIANT_SKIPPED
 
-- **WHEN** l'expression FHIRPath d'une contrainte ne peut pas être analysée (par ex. les variables d'environnement `%` telles que `%resource`, non encore supportées par le parseur, si bien que `dom-3` est toujours ignorée)
-- **THEN** la contrainte SHALL être ignorée tant que cette lacune du parseur n'est pas comblée
+- **WHEN** l'expression FHIRPath d'une contrainte ne peut pas être analysée (par ex. une fonction non implémentée comme `htmlChecks`, `resolve`, `lowBoundary` ou `memberOf`)
+- **THEN** la contrainte SHALL être ignorée tant que cette fonction n'est pas implémentée
 - **AND** exactement un Diagnostic `Information` `INVARIANT_SKIPPED` nommant la `key` et la raison SHALL être émis, afin qu'un résultat sans erreur ne masque jamais une contrainte non vérifiée
 
 #### Scenario: Invariant dom-6 évalué (identifiant entre backticks)
@@ -665,7 +695,7 @@ Le système SHALL émettre `REFERENCE_001` (erreur) lorsque `Reference.reference
 
 ### Requirement: Validation des références — ressource contenue absente (REFERENCE_002)
 
-Le système SHALL émettre `REFERENCE_002` (erreur) lorsqu'une référence `#id` ne correspond à aucun `id` dans `contained`, ou lorsque la référence est `#` seule hors d'une ressource contenue (ref-1 n'autorise `#` que si `%rootResource != %resource`). Une ressource contenue SHALL résoudre `#id` contre les `id` contenus de son conteneur, et `#` seul y SHALL être accepté. Une entrée de Bundle ou une ressource de Parameters est sa propre racine : `#id` SHALL être résolu contre son propre `contained` et `#` seul SHALL produire `REFERENCE_002`. `#id` SHALL être résolu quelle que soit la profondeur de la référence. En XML, un `<contained>` unique SHALL être accepté non encapsulé ; l'encapsulation `<contained><X>` étant dépliée au remodelage, aucune lecture XML spécifique des `id` contenus n'existe. `%rootResource` et `%resource` n'étant pas gérés par le moteur FHIRPath, ref-1 et dom-3 restent `INVARIANT_SKIPPED`.
+Le système SHALL émettre `REFERENCE_002` (erreur) lorsqu'une référence `#id` ne correspond à aucun `id` dans `contained`, ou lorsque la référence est `#` seule hors d'une ressource contenue (ref-1 n'autorise `#` que si `%rootResource != %resource`). Une ressource contenue SHALL résoudre `#id` contre les `id` contenus de son conteneur, et `#` seul y SHALL être accepté. Une entrée de Bundle ou une ressource de Parameters est sa propre racine : `#id` SHALL être résolu contre son propre `contained` et `#` seul SHALL produire `REFERENCE_002`. `#id` SHALL être résolu quelle que soit la profondeur de la référence. En XML, un `<contained>` unique SHALL être accepté non encapsulé ; l'encapsulation `<contained><X>` étant dépliée au remodelage, aucune lecture XML spécifique des `id` contenus n'existe. ref-1 et dom-3 SHALL être évaluées (voir l'évaluation des invariants avec environnement).
 
 #### Scenario: Contained introuvable
 

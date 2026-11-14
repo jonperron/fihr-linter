@@ -66,6 +66,7 @@ pub fn validate(resource: &Resource, registry: &Registry) -> Vec<Diagnostic> {
     let mut pending = validate_one(
         resource,
         &root,
+        None,
         sd,
         registry,
         json,
@@ -80,6 +81,7 @@ pub fn validate(resource: &Resource, registry: &Registry) -> Vec<Diagnostic> {
         let mut inner = validate_one(
             &embedded.resource,
             &embedded.typed,
+            embedded.container.as_ref(),
             embedded.sd,
             registry,
             json,
@@ -95,10 +97,12 @@ pub fn validate(resource: &Resource, registry: &Registry) -> Vec<Diagnostic> {
 }
 
 /// Every layer for one resource at instance `path`; returns the resources it embeds.
+/// `container` is the FHIRPath value of a contained resource's container.
 #[allow(clippy::too_many_arguments)] // the resource, its definition and its place
 fn validate_one<'a>(
     resource: &Resource,
     root: &fhir_fhirpath::Value,
+    container: Option<&fhir_fhirpath::Value>,
     sd: &StructureDefinition,
     registry: &'a Registry,
     json: bool,
@@ -106,9 +110,18 @@ fn validate_one<'a>(
     container_ids: Option<embedded::ContainedIds>,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Vec<embedded::Embedded<'a>> {
+    let is_subtype =
+        |child: &str, ancestor: &str| registry.type_ancestors(child).any(|code| code == ancestor);
+    // fhirpath.html: %rootResource is the container only for a contained resource.
+    let environment = fhir_fhirpath::Environment {
+        resource: Some(root),
+        root_resource: Some(container.unwrap_or(root)),
+        is_subtype: Some(&is_subtype),
+    };
     let embedded = nested::validate(
         resource,
         root,
+        &environment,
         sd,
         registry,
         json,
@@ -121,6 +134,7 @@ fn validate_one<'a>(
         sd,
         &|base, suffix| registry.is_choice_variant(base, suffix),
         root,
+        &environment,
         path,
         diagnostics,
     );

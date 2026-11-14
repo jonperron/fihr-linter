@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use fhir_definitions::{Constraint, StructureDefinition};
+use fhir_fhirpath::Environment;
 use fhir_parser::{Resource, Span};
 
 use crate::diagnostic::{Diagnostic, Severity};
@@ -8,18 +9,23 @@ use crate::diagnostic::{Diagnostic, Severity};
 /// Evaluate FHIRPath `constraint.expression` invariants of the root element.
 ///
 /// Constraints below the root run in the single walk (`nested.rs`) through
-/// [`check`]. `is_choice_variant(base, suffix)` makes choice elements navigable
-/// (`value` finds `valueQuantity`); `root` is the resource's FHIRPath value, typed
-/// by [`fhir_fhirpath::resource_to_typed_value`] and shared with the walk. `path` is the
+/// [`check`]. `root` is the resource's FHIRPath value, typed by
+/// [`fhir_fhirpath::resource_to_typed_value`] and shared with the walk; it is the
+/// context and `%resource`, the rest of `environment` is used as given. `path` is the
 /// resource's instance path (`Bundle.entry[0].resource` for an embedded one).
 pub fn validate(
     resource: &Resource,
     sd: &StructureDefinition,
     is_choice_variant: &dyn Fn(&str, &str) -> bool,
     root: &fhir_fhirpath::Value,
+    environment: &Environment<'_>,
     path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    let environment = Environment {
+        resource: Some(root),
+        ..*environment
+    };
     let resource_type = resource.resource_type.as_ref();
 
     // The root element carries the constraints for the whole resource.
@@ -32,6 +38,7 @@ pub fn validate(
             constraint,
             std::slice::from_ref(root),
             is_choice_variant,
+            &environment,
             path,
             None,
             diagnostics,
@@ -44,14 +51,15 @@ pub fn validate(
 /// Emits `INVARIANT_<key>` when the expression gives anything other than
 /// `[true]`. An expression that fails to parse or evaluate emits one
 /// `Information` `INVARIANT_SKIPPED` naming the key and the reason, so a clean
-/// result never hides an unchecked constraint (shortcut: the parser lacks `%`
-/// environment variables such as `%resource`, so `dom-3` is always skipped; add
-/// them, with a real `resolve()`, to check contained references). The
-/// expression is parsed once and cached on the constraint.
+/// result never hides an unchecked constraint. `is_choice_variant(base, suffix)` makes
+/// choice elements navigable (`value` finds `valueQuantity`); `environment` sets
+/// `%resource`, `%rootResource` and the FHIR type inheritance of `is` / `as` /
+/// `ofType`. The expression is parsed once and cached on the constraint.
 pub(crate) fn check(
     constraint: &Constraint,
     context: &[fhir_fhirpath::Value],
     is_choice_variant: &dyn Fn(&str, &str) -> bool,
+    environment: &Environment<'_>,
     path: &str,
     location: Option<Span>,
     diagnostics: &mut Vec<Diagnostic>,
@@ -63,7 +71,12 @@ pub(crate) fn check(
         .as_ref()
         .map_err(|e| fhir_fhirpath::EvalError::from(e.clone()))
         .and_then(|expr| {
-            fhir_fhirpath::evaluate_parsed_with_choices(expr, context, is_choice_variant)
+            fhir_fhirpath::evaluate_parsed_with_environment(
+                expr,
+                context,
+                is_choice_variant,
+                environment,
+            )
         });
     let (severity, code, message) = match result {
         // Satisfied only by exactly [true]; an empty collection or [false] is a violation.
@@ -169,6 +182,7 @@ mod tests {
             &sd,
             &|_, _| false,
             &empty_root(),
+            &Environment::default(),
             "Patient",
             &mut d,
         );
@@ -187,6 +201,7 @@ mod tests {
             &sd,
             &|_, _| false,
             &empty_root(),
+            &Environment::default(),
             "Patient",
             &mut d,
         );
@@ -208,6 +223,7 @@ mod tests {
             &sd,
             &|_, _| false,
             &empty_root(),
+            &Environment::default(),
             "Patient",
             &mut d,
         );
@@ -233,6 +249,7 @@ mod tests {
             &sd,
             &|_, _| false,
             &empty_root(),
+            &Environment::default(),
             "Patient",
             &mut d,
         );
@@ -257,6 +274,7 @@ mod tests {
             &sd,
             &|_, _| false,
             &empty_root(),
+            &Environment::default(),
             "Patient",
             &mut d,
         );
@@ -281,6 +299,7 @@ mod tests {
             &sd,
             &|_, _| false,
             &empty_root(),
+            &Environment::default(),
             "Patient",
             &mut d,
         );
@@ -309,6 +328,7 @@ mod tests {
             &sd,
             &|_, _| false,
             &empty_root(),
+            &Environment::default(),
             "Patient",
             &mut d,
         );
@@ -334,6 +354,7 @@ mod tests {
             &sd,
             &|_, _| false,
             &empty_root(),
+            &Environment::default(),
             "Patient",
             &mut d,
         );
@@ -363,6 +384,7 @@ mod tests {
             &sd,
             &|_, _| false,
             &empty_root(),
+            &Environment::default(),
             "Patient",
             &mut d,
         );
@@ -388,6 +410,7 @@ mod tests {
             &sd,
             &|_, _| false,
             &empty_root(),
+            &Environment::default(),
             "Patient",
             &mut d,
         );
@@ -412,6 +435,7 @@ mod tests {
                 &sd,
                 &|_, _| false,
                 &empty_root(),
+                &Environment::default(),
                 "Patient",
                 &mut d,
             );
