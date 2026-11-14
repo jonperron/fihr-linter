@@ -16,6 +16,7 @@ mod nested;
 mod profile;
 mod references;
 mod resolve;
+mod slicing;
 mod terminology;
 mod type_check;
 mod xml_shape;
@@ -138,6 +139,6 @@ fn validate_one<'a>(
         path,
         diagnostics,
     );
-    profile::validate(resource, sd, registry, path, diagnostics);
+    profile::validate(resource, sd, registry, &environment, path, diagnostics);
     embedded
 }
