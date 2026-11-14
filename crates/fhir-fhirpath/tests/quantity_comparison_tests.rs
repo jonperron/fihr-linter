@@ -148,6 +148,19 @@ fn literal_quantities_with_units_that_cannot_be_compared_give_empty() {
 }
 
 #[test]
+fn a_code_without_a_value_falls_back_to_the_unit_text() {
+    let json = OBSERVATION_JSON.replace(
+        r#""code":"[lb_av]""#,
+        r#""_code":{"extension":[{"url":"http://example.org/x","valueString":"y"}]}"#,
+    );
+    let context = typed(&parse_json(&json).unwrap());
+    assert_eq!(
+        boolean("Observation.valueQuantity = 185 'lbs'", &context),
+        Some(true)
+    );
+}
+
+#[test]
 fn an_xml_quantity_value_that_is_not_a_finite_decimal_is_not_a_quantity() {
     for text in ["NaN", "inf"] {
         let xml = OBSERVATION_XML.replace(

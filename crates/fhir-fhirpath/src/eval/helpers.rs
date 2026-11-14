@@ -191,17 +191,23 @@ fn as_quantity(v: &Value) -> Option<(f64, Option<&str>)> {
         },
         _ => return None,
     };
-    let unit = match fields.get("code") {
+    // An extension-only primitive has no value: treat it as absent.
+    let field = |key: &str| {
+        fields
+            .get(key)
+            .and_then(|items| items.first())
+            .map(Value::primitive_value)
+            .filter(|v| !matches!(v, Value::Null))
+    };
+    let unit = match field("code") {
         Some(_) if text("system").as_deref() != Some("http://unitsofmeasure.org") => return None,
-        Some(code) => code.first()?.primitive_value(),
-        None => match fields.get("unit") {
-            Some(unit) => unit.first()?.primitive_value(),
-            None => return Some((value, None)),
-        },
+        Some(code) => Some(code),
+        None => field("unit"),
     };
     match unit {
-        Value::String(unit) => Some((value, Some(unit))),
-        _ => None,
+        None => Some((value, None)),
+        Some(Value::String(unit)) => Some((value, Some(unit))),
+        Some(_) => None,
     }
 }
 
