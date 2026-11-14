@@ -97,7 +97,10 @@ const QUANTITIES: &str = r#"{"resourceType":"Parameters","parameter":[
     {"name":"other-system","valueQuantity":{"value":1,"unit":"tab",
         "system":"http://snomed.info/sct","code":"385055001"}},
     {"name":"comparator","valueQuantity":{"value":1,"comparator":"<",
-        "system":"http://unitsofmeasure.org","code":"mg/dL"}}]}"#;
+        "system":"http://unitsofmeasure.org","code":"mg/dL"}},
+    {"name":"ucum-gram","valueQuantity":{"value":2,"unit":"mg/dL",
+        "system":"http://unitsofmeasure.org","code":"g"}},
+    {"name":"no-unit-3","valueQuantity":{"value":3}}]}"#;
 
 #[test]
 fn a_quantity_with_a_unit_and_one_without_are_not_comparable() {
@@ -174,4 +177,115 @@ fn an_xml_quantity_value_that_is_not_a_finite_decimal_is_not_a_quantity() {
             "{text}: {result:?}"
         );
     }
+}
+
+#[test]
+fn incomparable_units_give_empty_for_or_equal_operators() {
+    let check = |expr: &str| boolean(expr, &[]);
+    assert_eq!(check("1 'kg' <= 2 'm'"), None);
+    assert_eq!(check("1 'kg' >= 2 'm'"), None);
+    assert_eq!(check("1 year <= 1 'a'"), None);
+    assert_eq!(check("1 year >= 1 'a'"), None);
+
+    let context = typed(&parse_json(QUANTITIES).unwrap());
+    let check = |expr: &str| boolean(expr, &context);
+    let p = |i: usize| format!("Parameters.parameter[{i}].valueQuantity");
+    assert_eq!(check(&format!("{} <= {}", p(0), p(2))), None);
+    assert_eq!(check(&format!("{} >= {}", p(2), p(0))), None);
+    assert_eq!(check(&format!("{} <= {}", p(3), p(6))), None);
+    assert_eq!(check(&format!("{} >= {}", p(6), p(3))), None);
+    assert_eq!(check(&format!("{} <= 3 'm'", p(3))), None);
+    assert_eq!(check(&format!("{} >= 1 'm'", p(3))), None);
+
+    let context = typed(&parse_json(OBSERVATION_JSON).unwrap());
+    // The unit text is not the unit when there is a UCUM code.
+    assert_eq!(
+        boolean("Observation.valueQuantity <= 200 'lbs'", &context),
+        None
+    );
+    assert_eq!(
+        boolean("Observation.valueQuantity >= 100 'lbs'", &context),
+        None
+    );
+}
+
+#[test]
+fn fhir_quantities_with_different_units_are_incomparable_and_not_equivalent() {
+    let context = typed(&parse_json(QUANTITIES).unwrap());
+    let check = |expr: &str| boolean(expr, &context);
+    let p = |i: usize| format!("Parameters.parameter[{i}].valueQuantity");
+    // Same unit text, different UCUM codes: the code decides.
+    assert_eq!(check(&format!("{} != {}", p(3), p(6))), None);
+    assert_eq!(check(&format!("{} ~ {}", p(3), p(6))), Some(false));
+    assert_eq!(check(&format!("{} !~ {}", p(3), p(6))), Some(true));
+    // Unit text and the same UCUM code are one unit, so the values decide.
+    assert_eq!(check(&format!("{} != {}", p(2), p(3))), Some(true));
+}
+
+#[test]
+fn unitless_fhir_quantities_are_ordered() {
+    let context = typed(&parse_json(QUANTITIES).unwrap());
+    let check = |expr: &str| boolean(expr, &context);
+    let p = |i: usize| format!("Parameters.parameter[{i}].valueQuantity");
+    assert_eq!(check(&format!("{} < {}", p(0), p(1))), Some(false));
+    assert_eq!(check(&format!("{} <= {}", p(0), p(1))), Some(true));
+    assert_eq!(check(&format!("{} >= {}", p(1), p(0))), Some(true));
+    assert_eq!(check(&format!("{} < {}", p(0), p(7))), Some(true));
+    assert_eq!(check(&format!("{} > {}", p(0), p(7))), Some(false));
+}
+
+#[test]
+fn a_code_without_a_ucum_system_is_not_a_quantity_unit() {
+    // Missing system: the code is not a UCUM unit, and the unit text is not used.
+    let json = OBSERVATION_JSON.replace(r#""system":"http://unitsofmeasure.org","#, "");
+    let context = typed(&parse_json(&json).unwrap());
+    let check = |expr: &str| boolean(expr, &context);
+    assert_eq!(
+        check("Observation.valueQuantity = 185 '[lb_av]'"),
+        Some(false)
+    );
+    assert_eq!(check("Observation.valueQuantity = 185 'lbs'"), Some(false));
+    assert_eq!(
+        check("Observation.valueQuantity = Observation.valueQuantity"),
+        Some(true)
+    );
+
+    // A non-UCUM system: same, the unit text is not a fallback.
+    let context = typed(&parse_json(QUANTITIES).unwrap());
+    assert_eq!(
+        boolean("Parameters.parameter[4].valueQuantity = 1 'tab'", &context),
+        Some(false)
+    );
+}
+
+#[test]
+fn an_xml_code_without_a_value_falls_back_to_the_unit_text() {
+    let xml = OBSERVATION_XML.replace(
+        r#"<code value="[lb_av]"/>"#,
+        r#"<code><extension url="http://example.org/x"><valueString value="y"/></extension></code>"#,
+    );
+    let context = typed(&parse_xml(&xml).unwrap());
+    assert_eq!(
+        boolean("Observation.valueQuantity = 185 'lbs'", &context),
+        Some(true)
+    );
+    assert_eq!(
+        boolean("Observation.valueQuantity = 185 '[lb_av]'", &context),
+        None
+    );
+}
+
+#[test]
+fn a_quantity_with_a_non_string_unit_is_not_a_quantity() {
+    let json = r#"{"resourceType":"Parameters","parameter":[
+        {"name":"n","valueQuantity":{"value":1,"unit":5}}]}"#;
+    let context = typed(&parse_json(json).unwrap());
+    let check = |expr: &str| boolean(expr, &context);
+    assert_eq!(
+        check("Parameters.parameter[0].valueQuantity = 1 '5'"),
+        Some(false)
+    );
+    // Not a Quantity, so ordering it against one is a type error.
+    let ordered = evaluate("Parameters.parameter[0].valueQuantity < 2 '5'", &context);
+    assert!(ordered.is_err(), "{ordered:?}");
 }
