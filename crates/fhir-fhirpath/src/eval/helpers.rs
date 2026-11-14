@@ -157,8 +157,73 @@ fn integer_op(lv: &Value, rv: &Value, op: &ArithOp) -> Result<Option<Value>, Eva
 
 // ── Equality / comparison ─────────────────────────────────────────────────────
 
+/// The value and unit of a Quantity literal, or of a FHIR Quantity whose
+/// children are typed (R5 fhirpath.html §2.1.9.1: FHIR Quantity maps to
+/// System.Quantity). The unit is the UCUM `code`, else the `unit` text, else
+/// none. A non-UCUM code or a `comparator` is not a System.Quantity value.
+/// shortcut: an Object does not carry its FHIR type, so a FHIR Quantity (or a
+/// descendant: Age, Duration...) is recognised by its typed `value: decimal` and
+/// its Quantity element names; upgrade when Object carries its type.
+fn as_quantity(v: &Value) -> Option<(f64, Option<&str>)> {
+    let fields = match v {
+        Value::Quantity(value, unit) => return Some((*value, Some(unit))),
+        Value::Object(fields) => fields,
+        _ => return None,
+    };
+    let quantity_element = |key: &Arc<str>| {
+        matches!(
+            &**key,
+            "value" | "unit" | "system" | "code" | "id" | "extension"
+        )
+    };
+    if !fields.keys().all(quantity_element) {
+        return None;
+    }
+    let text = |key: &str| match fields.get(key).map(Vec::as_slice) {
+        Some([item]) => item.primitive_value().as_string(),
+        _ => None,
+    };
+    let value = match fields.get("value").map(Vec::as_slice)? {
+        [Value::Primitive(value, _, Some(ty))] if &**ty == "decimal" => match &**value {
+            // XML primitives are text, typed by their element.
+            Value::String(text) => text.parse().ok().filter(|v: &f64| v.is_finite())?,
+            other => other.as_decimal()?,
+        },
+        _ => return None,
+    };
+    let unit = match fields.get("code") {
+        Some(_) if text("system").as_deref() != Some("http://unitsofmeasure.org") => return None,
+        Some(code) => code.first()?.primitive_value(),
+        None => match fields.get("unit") {
+            Some(unit) => unit.first()?.primitive_value(),
+            None => return Some((value, None)),
+        },
+    };
+    match unit {
+        Value::String(unit) => Some((value, Some(unit))),
+        _ => None,
+    }
+}
+
+/// N1 §6.1, §6.2 on two Quantities: `Some(Some((x, y)))` when their units
+/// match, `Some(None)` when they cannot be compared (different units, with no
+/// UCUM conversion, or a unit on one side only), `None` when either is not a
+/// Quantity.
+fn quantity_values(a: &Value, b: &Value, equivalent: bool) -> Option<Option<(f64, f64)>> {
+    let ((x, x_unit), (y, y_unit)) = (as_quantity(a)?, as_quantity(b)?);
+    let comparable = match (x_unit, y_unit) {
+        (None, None) => true,
+        (Some(x_unit), Some(y_unit)) => same_quantity_unit(x_unit, y_unit, equivalent),
+        _ => false,
+    };
+    Some(comparable.then_some((x, y)))
+}
+
 pub(super) fn values_equal(a: &Value, b: &Value) -> Option<bool> {
     let (a, b) = (a.primitive_value(), b.primitive_value());
+    if let Some(values) = quantity_values(a, b, false) {
+        return values.map(|(x, y)| x == y);
+    }
     match (a, b) {
         (Value::Null, _) | (_, Value::Null) => None,
         (Value::Bool(x), Value::Bool(y)) => Some(x == y),
@@ -171,9 +236,6 @@ pub(super) fn values_equal(a: &Value, b: &Value) -> Option<bool> {
         (Value::Long(x), Value::Decimal(y)) => Some(*x as f64 == *y),
         (Value::Decimal(x), Value::Long(y)) => Some(*x == *y as f64),
         (Value::String(x), Value::String(y)) => Some(x == y),
-        (Value::Quantity(xv, xu), Value::Quantity(yv, yu)) => {
-            Some(xv == yv && same_quantity_unit(xu, yu, false))
-        }
         // N1 §6.1.1: complex values are equal when all their properties are.
         (Value::Object(x), Value::Object(y)) => objects_match(x, y, false),
         // A complex value never equals a primitive. Without type knowledge an XML
@@ -190,6 +252,9 @@ pub(super) fn operator_order(
     b: &Value,
 ) -> Result<Option<std::cmp::Ordering>, EvalError> {
     let (a, b) = (a.primitive_value(), b.primitive_value());
+    if let Some(values) = quantity_values(a, b, false) {
+        return Ok(values.map(|(x, y)| x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal)));
+    }
     match (a, b) {
         (Value::Date(_) | Value::DateTime(_), Value::Date(_) | Value::DateTime(_))
         | (Value::Time(_), Value::Time(_)) => Ok(temporal_order(a, b)),
@@ -310,6 +375,9 @@ pub(super) fn values_equivalent(a: &Value, b: &Value) -> bool {
             .collect::<String>()
             .to_lowercase()
     };
+    if let Some(values) = quantity_values(a, b, true) {
+        return values.is_some_and(|(x, y)| x == y);
+    }
     match (a, b) {
         (Value::Null, Value::Null) => true,
         (Value::String(x), Value::String(y)) => normalise(x) == normalise(y),
@@ -324,9 +392,6 @@ pub(super) fn values_equivalent(a: &Value, b: &Value) -> bool {
             _ => false,
         },
         (Value::Object(x), Value::Object(y)) => objects_match(x, y, true) == Some(true),
-        (Value::Quantity(xv, xu), Value::Quantity(yv, yu)) => {
-            xv == yv && same_quantity_unit(xu, yu, true)
-        }
         _ => values_equal(a, b).unwrap_or(false),
     }
 }
