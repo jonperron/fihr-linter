@@ -66,6 +66,8 @@ pub(crate) fn to_json_shape(
             shaper.trimmed_warning(&format!("{name}.id"), *span);
         }
     }
+    // shortcut: a plain root `<id>` is lifted out of `fields`, so its place among the root's
+    // children is not order-checked; give `Resource` the id's span if that is needed.
     // The parser rejects attributes on the root, so its fields have no parent offset.
     let fields = shaper.fields(&resource.fields, sd, name, name, None);
     let reshaped = Resource {
@@ -109,7 +111,8 @@ impl Shaper<'_> {
     ) -> Fields {
         let prefix = format!("{def_path}.");
         let mut out = Fields::with_capacity(fields.len());
-        // Child elements as (span, snapshot position, path); attributes have no order.
+        // Child elements as (span, snapshot position, path). Attributes have no order, and an
+        // attribute written as a child element already has its form error.
         let mut siblings = Vec::new();
         for (name, node) in fields {
             let resolved = resolve(sd, &format!("{prefix}{name}"), name);
@@ -125,7 +128,8 @@ impl Shaper<'_> {
             let child_path = format!("{path}.{name}");
             for (item, item_path) in items(node, &child_path) {
                 self.check_form(item, name, elem.xml_attr, parent, &item_path);
-                if let Some(position) = position.filter(|_| parent != Some(item.span.offset)) {
+                let is_child = !elem.xml_attr && parent != Some(item.span.offset);
+                if let Some(position) = position.filter(|_| is_child) {
                     siblings.push((item.span, position, item_path));
                 }
             }

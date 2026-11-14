@@ -149,6 +149,14 @@ fn sibling_elements_out_of_snapshot_order_are_reported() {
             "<gender value=\"male\"/><active value=\"true\"/>",
             vec!["Error STRUCTURE_004 Patient.active"],
         ),
+        // Each sibling written after `gender` but listed before it.
+        (
+            "<gender value=\"male\"/><active value=\"true\"/><name><family value=\"x\"/></name>",
+            vec![
+                "Error STRUCTURE_004 Patient.active",
+                "Error STRUCTURE_004 Patient.name",
+            ],
+        ),
         (
             "<name><given value=\"a\"/><family value=\"b\"/><given value=\"c\"/></name>",
             vec!["Error STRUCTURE_004 Patient.name.family"],
@@ -167,6 +175,15 @@ fn sibling_elements_out_of_snapshot_order_are_reported() {
     for (body, expected) in cases {
         assert_eq!(patient_diagnostics(body), expected, "{body}");
     }
+}
+
+// The form error already covers an attribute written as a child element; no order error too.
+#[test]
+fn attribute_element_written_as_a_child_gets_only_the_form_error() {
+    assert_eq!(
+        patient_diagnostics("<name><family value=\"S\"/><id value=\"n1\"/></name>"),
+        ["Error STRUCTURE_001 Patient.name.id"],
+    );
 }
 
 #[test]
@@ -210,7 +227,10 @@ fn elements_of_a_contained_resource_out_of_order_are_reported() {
 fn trimmed_resource_id_gets_a_warning() {
     let cases = [
         "<id value=\" p1 \"/>",
-        "<id value=\"p1 \"><extension url=\"http://e.org\"><valueBoolean value=\"true\"/></extension></id>",
+        concat!(
+            "<id value=\"p1 \"><extension url=\"http://e.org\">",
+            "<valueBoolean value=\"true\"/></extension></id>",
+        ),
     ];
     for body in cases {
         assert_eq!(
