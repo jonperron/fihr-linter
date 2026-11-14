@@ -1245,7 +1245,7 @@ Le système SHALL émettre un `Diagnostic` avec code `TYPE_006` et severity `War
 
 ### Requirement: Validation de type — valeur d'attribut XML épurée (TYPE_007)
 
-Pour une ressource XML, chaque valeur d'attribut épurée par le parseur (`Resource::trimmed_attributes`) sur un élément connu SHALL produire un `Diagnostic` avec code `TYPE_007` et severity `Warning`. Le `path` SHALL être le chemin d'instance de l'élément (ex. `Patient.active`, `Patient._gender.id`, `Patient._birthDate.extension.url`). Les blancs retirés SHALL NOT produire d'erreur de type (`TYPE_001`). Ce code est distinct de `TYPE_006`, réservé aux caractères de contrôle.
+Pour une ressource XML, chaque valeur d'attribut épurée par le parseur (`Resource::trimmed_attributes`) sur un élément connu SHALL produire un `Diagnostic` avec code `TYPE_007` et severity `Warning`. Le `path` SHALL être le chemin d'instance de l'élément (ex. `Patient.active`, `Patient._gender.id`, `Patient._birthDate.extension.url`). Les blancs retirés SHALL NOT produire d'erreur de type (`TYPE_001`). Ce code est distinct de `TYPE_006`, réservé aux caractères de contrôle. L'`id` de la ressource racine (`<id value=" p1 "/>`, remonté par le parseur dans `Resource::id`) est aussi couvert : le `Diagnostic` a le `path` `<Type>.id` et la localisation de l'élément `<id>`.
 
 #### Scenario: Valeur primitive épurée
 
@@ -1256,6 +1256,11 @@ Pour une ressource XML, chaque valeur d'attribut épurée par le parseur (`Resou
 
 - **WHEN** `validate` reçoit un `id` épuré sur `<gender>` ou un `url` épuré sur une extension de `<birthDate>`
 - **THEN** un `TYPE_007` de severity `Warning` SHALL être émis au chemin respectif `Patient._gender.id` ou `Patient._birthDate.extension.url`
+
+#### Scenario: id de la ressource racine épuré
+
+- **WHEN** `validate` reçoit un `Patient` XML avec `<id value=" p1 "/>`
+- **THEN** un `TYPE_007` de severity `Warning` SHALL être émis au chemin `Patient.id` avec la localisation de l'élément `<id>`
 
 ### Requirement: Validation de type — whitespace seul dans une chaîne (TYPE_008)
 
@@ -1299,3 +1304,41 @@ Pour une ressource XML, le système SHALL émettre, pour chaque élément enregi
 
 - **WHEN** deux éléments distincts de la ressource déclarent le namespace XMLSchema-instance
 - **THEN** deux Diagnostics `STRUCTURE_003` SHALL être émis, chacun à la localisation de son élément
+
+### Requirement: Validation structurelle — ordre des éléments XML (STRUCTURE_004)
+
+Pour une ressource XML uniquement, le système SHALL émettre un `Diagnostic` avec code `STRUCTURE_004` et severity `Error` pour chaque élément enfant écrit après un frère que le snapshot de la StructureDefinition de base liste plus tard (xml.html : « Elements must always appear in the order documented »). Le `path` SHALL être le chemin d'instance de l'élément fautif et la localisation sa position dans la source. Les frères SHALL être comparés par offset du span source (le parseur regroupe les frères répétés en tableaux). Une variante de choix `[x]` prend la position de son élément `[x]`. Tout frère situé après un frère listé plus tard SHALL être signalé (`gender, active, name` : `active` et `name`). La règle s'applique à toute profondeur (éléments backbone, types complexes, enfants d'extension de primitif, ressources contenues ou embarquées). Les attributs n'ont pas d'ordre : un élément `xmlAttr` écrit comme élément enfant reçoit seulement `STRUCTURE_001`, sans `STRUCTURE_004`. Limite connue : un `<id>` simple à la racine est remonté par le parseur, donc sa position parmi les enfants de la racine n'est pas vérifiée. Une ressource JSON SHALL NOT produire ce diagnostic.
+
+#### Scenario: Éléments dans le mauvais ordre
+
+- **WHEN** `validate` reçoit un `Patient` XML avec `<gender/>` puis `<active/>`
+- **THEN** un Diagnostic `STRUCTURE_004` SHALL être émis au chemin `Patient.active` avec sa localisation
+
+#### Scenario: Frère répété intercalé
+
+- **WHEN** un `Patient` XML contient `<name>` avec `<given/><family/><given/>`
+- **THEN** un seul `STRUCTURE_004` SHALL être émis, au chemin `Patient.name.family`
+
+#### Scenario: Ordre correct
+
+- **WHEN** un `Patient` XML a ses éléments dans l'ordre du snapshot
+- **THEN** aucun `STRUCTURE_004` ne SHALL être émis
+
+#### Scenario: Attribut écrit comme élément
+
+- **WHEN** un élément `xmlAttr` est écrit comme élément enfant
+- **THEN** seul un `STRUCTURE_001` SHALL être émis, sans `STRUCTURE_004`
+
+### Requirement: Validation — objets et éléments jamais vides
+
+Un élément complexe vide (`<name/>` en XML, `"name": [{}]` en JSON) SHALL être signalé par l'invariant `ele-1`, à toute profondeur ; une valeur d'attribut vide (`<family value=""/>`) SHALL être signalée par les contrôles de type (`TYPE_003`) (xml.html « Attributes cannot be empty », « FHIR elements are never empty » ; json.html « Objects are never empty »). Chaque nœud SHALL produire ce diagnostic une seule fois, sans contrôle séparé.
+
+#### Scenario: Élément complexe vide
+
+- **WHEN** un `Patient` contient `<name/>` (XML) ou `"name": [{}]` (JSON)
+- **THEN** un diagnostic `ele-1` SHALL être émis une seule fois pour ce nœud
+
+#### Scenario: Attribut vide
+
+- **WHEN** un `Patient` XML contient `<family value=""/>` dans un `name`
+- **THEN** un `TYPE_003` SHALL être émis une seule fois pour ce nœud

@@ -245,12 +245,17 @@ Le namespace XMLSchema-instance n'est pas une erreur de parse : il est enregistr
 
 ### Requirement: Épuration des valeurs d'attribut
 
-`parse_xml` SHALL retirer des valeurs d'attribut les blancs XML (espace, tabulation, CR, LF) en tête et en fin. Chaque attribut ainsi modifié SHALL être enregistré dans `Resource::trimmed_attributes` sous la forme (position en octets de l'élément, nom de l'attribut). Exception : une valeur composée uniquement de blancs SHALL être conservée telle quelle (ni réduite à `""`, ni enregistrée dans `trimmed_attributes`, donc sans `TYPE_007`). Pour une ressource issue du JSON, `trimmed_attributes` SHALL être vide.
+`parse_xml` SHALL retirer des valeurs d'attribut les blancs XML (espace, tabulation, CR, LF) en tête et en fin. Chaque attribut ainsi modifié SHALL être enregistré dans `Resource::trimmed_attributes` sous la forme d'un `TrimmedAttribute` (`Resource::trimmed_attributes` est un `Vec<TrimmedAttribute>`) : `TrimmedAttribute::Element(offset, name)` (position en octets de l'élément, nom de l'attribut) pour un attribut d'élément, et `TrimmedAttribute::ResourceId(span)` pour la valeur épurée du `<id>` racine, remontée dans `Resource::id`, portant le span de l'élément `<id>`. Exception : une valeur composée uniquement de blancs SHALL être conservée telle quelle (ni réduite à `""`, ni enregistrée dans `trimmed_attributes`, donc sans `TYPE_007`). Pour une ressource issue du JSON, `trimmed_attributes` SHALL être vide.
 
 #### Scenario: Valeur épurée
 
 - **WHEN** `parse_xml` reçoit `<active value=" true "/>`
 - **THEN** `active` SHALL valoir `Value::Str("true")` et `trimmed_attributes` SHALL contenir la position de `<active>` avec le nom `value`
+
+#### Scenario: id racine épuré
+
+- **WHEN** `parse_xml` reçoit un `Patient` avec `<id value=" p1 "/>`
+- **THEN** `Resource::id` SHALL valoir `p1` et `trimmed_attributes` SHALL contenir `TrimmedAttribute::ResourceId` avec le span de l'élément `<id>`
 
 #### Scenario: Valeur composée uniquement de blancs
 
