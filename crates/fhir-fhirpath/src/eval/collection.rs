@@ -4,9 +4,9 @@ use crate::value::{Collection, Value};
 
 use super::Evaluator;
 use super::helpers::{
-    as_type, check_arity, check_arity_range, check_collection_len, collect_descendants,
-    compare_values, contains_value, criteria_bool, distinct, eval_type_name, is_type,
-    optional_integer, primitive_values, value_is_type,
+    as_type, check_arity, check_arity_range, check_collection_len, check_type_name,
+    collect_descendants, compare_values, contains_value, criteria_bool, distinct, eval_type_name,
+    is_type, optional_integer, primitive_values, value_is_type,
 };
 
 impl Evaluator<'_> {
@@ -145,6 +145,7 @@ impl Evaluator<'_> {
             "ofType" => {
                 check_arity(name, args, 1)?;
                 let type_name = eval_type_name(&args[0])?;
+                check_type_name(&type_name, self.environment.is_subtype)?;
                 focus
                     .iter()
                     .filter_map(|v| {

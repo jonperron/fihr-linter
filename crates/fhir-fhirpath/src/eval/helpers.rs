@@ -509,6 +509,15 @@ pub(super) fn value_is_type(
     Ok(system)
 }
 
+/// Fail on an unknown type name before looking at the input, so an empty
+/// input does not hide it (`Null` matches no type, it only runs the check).
+pub(super) fn check_type_name(
+    type_name: &str,
+    is_subtype: Option<&super::IsSubtype<'_>>,
+) -> Result<(), EvalError> {
+    value_is_type(&Value::Null, type_name, is_subtype).map(drop)
+}
+
 /// Shared by the `is` operator and `is()` (N1 §6.3.1): empty in, empty out;
 /// more than one item is an error.
 pub(super) fn is_type(
@@ -516,6 +525,7 @@ pub(super) fn is_type(
     type_name: &str,
     is_subtype: Option<&super::IsSubtype<'_>>,
 ) -> Result<Collection, EvalError> {
+    check_type_name(type_name, is_subtype)?;
     match focus {
         [] => Ok(vec![]),
         [v] => Ok(vec![Value::Bool(value_is_type(v, type_name, is_subtype)?)]),
@@ -533,6 +543,7 @@ pub(super) fn as_type(
     type_name: &str,
     is_subtype: Option<&super::IsSubtype<'_>>,
 ) -> Result<Collection, EvalError> {
+    check_type_name(type_name, is_subtype)?;
     match focus {
         [] => Ok(vec![]),
         [v] => Ok(value_is_type(v, type_name, is_subtype)?

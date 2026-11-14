@@ -169,3 +169,13 @@ fn define_variable_takes_one_or_two_arguments() {
     ));
     assert!(eval("defineVariable('a', 1, 2)").is_err());
 }
+
+#[test]
+fn a_variable_survives_an_indexer() -> TestResult {
+    assert_eq!(
+        strings("defineVariable('n', name[1]).name[0].select(%n.given)")?,
+        ["Jim"]
+    );
+    assert_eq!(strings("defineVariable('i', 1).name[%i].given")?, ["Jim"]);
+    Ok(())
+}

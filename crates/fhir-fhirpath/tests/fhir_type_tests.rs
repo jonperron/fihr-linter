@@ -195,6 +195,10 @@ fn an_unknown_type_name_is_an_error() -> TestResult {
         "Questionnaire.status.is(string1)",
         "Questionnaire.status is string1",
         "Questionnaire as Questionnaire1",
+        // The name is checked even when the input is empty.
+        "{}.as(string1)",
+        "{}.ofType(string1)",
+        "{} is string1",
     ] {
         let error = eval(expression, true).err();
         let error = error.as_deref().and_then(|e| e.downcast_ref::<EvalError>());

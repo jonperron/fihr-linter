@@ -226,21 +226,8 @@ impl Evaluator<'_> {
             Expr::Ident(name) => self.eval_ident(name, ctx, true),
 
             // ── Navigation and function calls ──────────────────────────────
-            Expr::Dot(..) | Expr::FuncCall(..) | Expr::Method(..) => {
+            Expr::Dot(..) | Expr::FuncCall(..) | Expr::Method(..) | Expr::Index(..) => {
                 Ok(self.eval_chain(expr, ctx)?.0)
-            }
-
-            Expr::Index(base, index_expr) => {
-                let base_col = self.eval(base, ctx)?;
-                let idx_col = self.eval(index_expr, ctx)?;
-                let idx = helpers::single_integer(&idx_col, "index")?;
-                // FHIRPath §5.5: an index past the end (or negative) yields empty.
-                Ok(usize::try_from(idx)
-                    .ok()
-                    .and_then(|i| base_col.get(i))
-                    .cloned()
-                    .into_iter()
-                    .collect())
             }
 
             // ── Arithmetic ─────────────────────────────────────────────────
@@ -426,6 +413,18 @@ impl Evaluator<'_> {
                 next.call_chain(name, args, &base_col, ctx)?
             }
             Expr::FuncCall(name, args) => self.call_chain(name, args, ctx, ctx)?,
+            Expr::Index(base, index_expr) => {
+                let (base_col, scope) = self.eval_chain(base, ctx)?;
+                let next = Evaluator {
+                    variables: scope,
+                    ..*self
+                };
+                let idx_col = next.eval(index_expr, ctx)?;
+                let idx = helpers::single_integer(&idx_col, "index")?;
+                // FHIRPath §5.5: an index past the end (or negative) yields empty.
+                let item = usize::try_from(idx).ok().and_then(|i| base_col.get(i));
+                (item.cloned().into_iter().collect(), next.variables)
+            }
             _ => return Ok((self.eval(expr, ctx)?, self.variables.clone())),
         };
         helpers::check_collection_len(col.len())?;
