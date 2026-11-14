@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.2.0](https://github.com/jonperron/fhir-linter/compare/fhir-linter-v1.1.0...fhir-linter-v1.2.0) (2026-11-14)
+
+
+### Features
+
+* **validator:** evaluate closed, ordered and type slicing ([4617069](https://github.com/jonperron/fhir-linter/commit/4617069c501498ab6c75f49db95de24de29b396d))
+* **validator:** evaluate closed, ordered and type slicing ([#104](https://github.com/jonperron/fhir-linter/issues/104)) ([0b0e202](https://github.com/jonperron/fhir-linter/commit/0b0e202f5e0db3e10f16771e8d9134a60d24a161))
+* **validator:** evaluate invariants with fhir types and resources ([e92c16b](https://github.com/jonperron/fhir-linter/commit/e92c16b1fd2dbc2025c77bf9d3d60baddbb6faf7))
+* **validator:** evaluate invariants with fhir types and resources ([#101](https://github.com/jonperron/fhir-linter/issues/101)) ([35e5c8c](https://github.com/jonperron/fhir-linter/commit/35e5c8cb9e8ffe02d0e40071ff2da1bb7408bfe2))
+
+
+### Bug Fixes
+
+* **fhirpath:** compare fhir quantities as quantities ([aa5f07f](https://github.com/jonperron/fhir-linter/commit/aa5f07f6772aa564bdcb09560d48d4d5487244eb))
+* **fhirpath:** compare fhir quantities as quantities ([#103](https://github.com/jonperron/fhir-linter/issues/103)) ([07915e6](https://github.com/jonperron/fhir-linter/commit/07915e6fdfc1b7779f4bb321034e4ac7be52ff82))
+* **fhirpath:** fall back to unit text for an extension-only quantity code ([95bd1d1](https://github.com/jonperron/fhir-linter/commit/95bd1d1cf8f3d05b0cc9cde012a22ff04b8d2672))
+* **fhirpath:** implement definevariable and reject unknown type names ([215749c](https://github.com/jonperron/fhir-linter/commit/215749cc104b5835bf49d3cef783af4e1814b024))
+* **fhirpath:** implement defineVariable and reject unknown type names ([#100](https://github.com/jonperron/fhir-linter/issues/100)) ([b95e98d](https://github.com/jonperron/fhir-linter/commit/b95e98d50a5ad995bb8e98f899cbcbac0d6d82f3))
+* **fhirpath:** keep variables across indexers and check empty types ([5d53637](https://github.com/jonperron/fhir-linter/commit/5d536376528dbf92563d80a01568d0f0b6170ff7))
+* **validator:** report xml element order and trimmed resource ids ([46d3355](https://github.com/jonperron/fhir-linter/commit/46d335511d6b5041b6046c9010d610acdaa97d65))
+* **validator:** report xml element order and trimmed resource ids ([#105](https://github.com/jonperron/fhir-linter/issues/105)) ([e31b350](https://github.com/jonperron/fhir-linter/commit/e31b350fcd93bcf27774a59125cb8b861e95f6ca))
+* **validator:** skip attribute elements in the xml order check ([658f066](https://github.com/jonperron/fhir-linter/commit/658f066bec2c5a55536c6b79131b2e97a3a2c3e1))
+
 ## [1.1.0](https://github.com/jonperron/fhir-linter/compare/fhir-linter-v1.0.0...fhir-linter-v1.1.0) (2026-11-14)
 
 

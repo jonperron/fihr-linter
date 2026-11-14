@@ -243,7 +243,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "fhir-cli"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -257,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "fhir-definitions"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "fhir-fhirpath",
  "serde_json",
@@ -266,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "fhir-fhirpath"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "fhir-definitions",
  "fhir-parser",
@@ -280,7 +280,7 @@ dependencies = [
 
 [[package]]
 name = "fhir-linter"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "fhir-definitions",
  "fhir-parser",
@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "fhir-node"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "fhir-definitions",
  "fhir-linter",
@@ -305,7 +305,7 @@ dependencies = [
 
 [[package]]
 name = "fhir-parser"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "indexmap",
  "quick-xml",
@@ -314,7 +314,7 @@ dependencies = [
 
 [[package]]
 name = "fhir-python"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "fhir-definitions",
  "fhir-linter",
@@ -325,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "fhir-validator"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "fhir-definitions",
  "fhir-fhirpath",
