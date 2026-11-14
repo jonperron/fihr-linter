@@ -4,6 +4,7 @@
 /// Implemented functions are grouped by category; any other function name
 /// yields [`EvalError::UndefinedFunction`].
 use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::ast::{Expr, TemporalKind};
@@ -44,6 +45,7 @@ pub fn eval(
         total: None,
         index: None,
         string_chars: &Cell::new(0),
+        variables: None,
     }
     .eval(expr, context)
 }
@@ -96,6 +98,26 @@ pub(super) struct Evaluator<'a> {
     total: Option<&'a [Value]>,
     /// `$index` while an expression parameter is evaluated for one item.
     index: Option<usize>,
+    /// Variables of `defineVariable()` in scope, innermost first.
+    variables: Scope,
+}
+
+/// A `defineVariable()` variable and the scope it was defined in.
+pub(super) struct Variable {
+    name: Arc<str>,
+    value: Collection,
+    outer: Scope,
+}
+
+pub(super) type Scope = Option<Rc<Variable>>;
+
+/// Names of the system variables `defineVariable()` may not redefine.
+fn is_system_variable(name: &str) -> bool {
+    matches!(
+        name,
+        "context" | "resource" | "rootResource" | "ucum" | "sct" | "loinc"
+    ) || name.starts_with("vs-")
+        || name.starts_with("ext-")
 }
 
 impl Evaluator<'_> {
@@ -109,6 +131,7 @@ impl Evaluator<'_> {
     ) -> Result<Collection, EvalError> {
         Evaluator {
             index: Some(index),
+            variables: self.variables.clone(),
             ..*self
         }
         .eval(expr, std::slice::from_ref(item))
@@ -118,6 +141,9 @@ impl Evaluator<'_> {
     /// fhirpath.html §2.1.9.1.5 (`%sct`, `%loinc`, `%vs-*`, `%ext-*`),
     /// `%context`, and `%resource` / `%rootResource` (see [`Environment`]).
     fn environment_variable(&self, name: &str) -> Result<Collection, EvalError> {
+        if let Some(variable) = self.variable(name) {
+            return Ok(variable.value.clone());
+        }
         let input_resource = match self.context {
             [value @ Value::Object(map)] if map.contains_key("resourceType") => Some(value),
             _ => None,
@@ -199,34 +225,9 @@ impl Evaluator<'_> {
             // ── Identifier / path step ─────────────────────────────────────
             Expr::Ident(name) => self.eval_ident(name, ctx, true),
 
-            // ── Navigation ─────────────────────────────────────────────────
-            Expr::Dot(base, step) => {
-                let base_col = self.eval(base, ctx)?;
-                match &**step {
-                    // A type name may only lead the expression, not follow a dot.
-                    Expr::Ident(name) => self.eval_ident(name, &base_col, false),
-                    _ => self.eval(step, &base_col),
-                }
-            }
-
-            Expr::Index(base, index_expr) => {
-                let base_col = self.eval(base, ctx)?;
-                let idx_col = self.eval(index_expr, ctx)?;
-                let idx = helpers::single_integer(&idx_col, "index")?;
-                // FHIRPath §5.5: an index past the end (or negative) yields empty.
-                Ok(usize::try_from(idx)
-                    .ok()
-                    .and_then(|i| base_col.get(i))
-                    .cloned()
-                    .into_iter()
-                    .collect())
-            }
-
-            // ── Function calls ─────────────────────────────────────────────
-            Expr::FuncCall(name, args) => self.call_function(name, args, ctx, ctx),
-            Expr::Method(base, name, args) => {
-                let base_col = self.eval(base, ctx)?;
-                self.call_function(name, args, &base_col, ctx)
+            // ── Navigation and function calls ──────────────────────────────
+            Expr::Dot(..) | Expr::FuncCall(..) | Expr::Method(..) | Expr::Index(..) => {
+                Ok(self.eval_chain(expr, ctx)?.0)
             }
 
             // ── Arithmetic ─────────────────────────────────────────────────
@@ -377,6 +378,95 @@ impl Evaluator<'_> {
             .flat_map(|(_, values)| values.iter().cloned())
             .collect();
         (!variants.is_empty()).then_some(variants)
+    }
+
+    // ── Expression chains and defineVariable ────────────────────────────────
+
+    /// The innermost `defineVariable()` variable called `name`, if in scope.
+    fn variable(&self, name: &str) -> Option<&Variable> {
+        std::iter::successors(self.variables.as_deref(), |v| v.outer.as_deref())
+            .find(|v| &*v.name == name)
+    }
+
+    /// Evaluate a path or call chain, and return the variables it leaves in
+    /// scope: a `defineVariable()` is visible to the rest of its chain only.
+    fn eval_chain(&self, expr: &Expr, ctx: &[Value]) -> Result<(Collection, Scope), EvalError> {
+        let (col, scope) = match expr {
+            Expr::Dot(base, step) => {
+                let (base_col, scope) = self.eval_chain(base, ctx)?;
+                let next = Evaluator {
+                    variables: scope,
+                    ..*self
+                };
+                match &**step {
+                    // A type name may only lead the expression, not follow a dot.
+                    Expr::Ident(name) => (next.eval_ident(name, &base_col, false)?, next.variables),
+                    _ => next.eval_chain(step, &base_col)?,
+                }
+            }
+            Expr::Method(base, name, args) => {
+                let (base_col, scope) = self.eval_chain(base, ctx)?;
+                let next = Evaluator {
+                    variables: scope,
+                    ..*self
+                };
+                next.call_chain(name, args, &base_col, ctx)?
+            }
+            Expr::FuncCall(name, args) => self.call_chain(name, args, ctx, ctx)?,
+            Expr::Index(base, index_expr) => {
+                let (base_col, scope) = self.eval_chain(base, ctx)?;
+                let next = Evaluator {
+                    variables: scope,
+                    ..*self
+                };
+                let idx_col = next.eval(index_expr, ctx)?;
+                let idx = helpers::single_integer(&idx_col, "index")?;
+                // FHIRPath §5.5: an index past the end (or negative) yields empty.
+                let item = usize::try_from(idx).ok().and_then(|i| base_col.get(i));
+                (item.cloned().into_iter().collect(), next.variables)
+            }
+            _ => return Ok((self.eval(expr, ctx)?, self.variables.clone())),
+        };
+        helpers::check_collection_len(col.len())?;
+        Ok((col, scope))
+    }
+
+    /// Call a function in a chain; `defineVariable(name [, expr])` returns
+    /// its input and adds the variable (`expr` on the input, or the input).
+    fn call_chain(
+        &self,
+        name: &str,
+        args: &[Expr],
+        focus: &[Value],
+        ctx: &[Value],
+    ) -> Result<(Collection, Scope), EvalError> {
+        if name != "defineVariable" {
+            let col = self.call_function(name, args, focus, ctx)?;
+            return Ok((col, self.variables.clone()));
+        }
+        helpers::check_arity_range(name, args, 1, 2)?;
+        let name_col = self.eval(&args[0], focus)?;
+        let Some(Value::String(var_name)) = singleton(&name_col, name)?.map(Value::primitive_value)
+        else {
+            return Err(EvalError::Type(
+                "defineVariable() name must be a String".to_owned(),
+            ));
+        };
+        if is_system_variable(var_name) || self.variable(var_name).is_some() {
+            return Err(EvalError::Type(format!(
+                "variable %{var_name} is already defined"
+            )));
+        }
+        let value = match args.get(1) {
+            Some(expr) => self.eval(expr, focus)?,
+            None => focus.to_vec(),
+        };
+        let variable = Variable {
+            name: Arc::clone(var_name),
+            value,
+            outer: self.variables.clone(),
+        };
+        Ok((focus.to_vec(), Some(Rc::new(variable))))
     }
 
     // ── Function dispatch ───────────────────────────────────────────────────

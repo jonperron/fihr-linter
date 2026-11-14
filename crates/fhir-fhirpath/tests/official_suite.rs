@@ -49,8 +49,10 @@ use quick_xml::events::{BytesStart, Event};
 /// FHIR type (7 testInheritance cases had guessed `false`), then to 948 when
 /// values carry their FHIR type and is/as/ofType follow the Registry's type
 /// ancestry (11 testInheritance cases, and testType11: an XML `boolean` is
-/// text, typed `boolean` by its element).
-const MIN_PASSED: u32 = 948;
+/// text, typed `boolean` by its element), then to 969 by `defineVariable()`
+/// (19 cases; defineVariable7 still fails on the XML `boolean` text) and an
+/// unknown type name in as/ofType being an error (2 cases).
+const MIN_PASSED: u32 = 969;
 
 /// (run, skipped) case counts on the pinned fixtures, so loader drift or a
 /// broken skip filter cannot hide behind the floor.

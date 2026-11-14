@@ -197,7 +197,7 @@ Le système SHALL implémenter `empty()`, `exists()`, `exists(criteria)`, `all(c
 
 Le système SHALL implémenter `where(criteria)`, `select(projection)`, `repeat(projection)`, `ofType(type)`, `is(type)`, `as(type)`.
 
-L'argument de `ofType`, `is` et `as` est un identifiant de nom de type. La correspondance de type (partagée par `ofType`, les fonctions `is`/`as` et les opérateurs `is`/`as`) SHALL accepter les types primitifs FHIRPath ainsi qu'un objet ressource dont `resourceType` est exactement égal au nom de type. Elle ne SHALL pas gérer les noms qualifiés (`FHIR.X`, `System.X`). Lorsque `Environment::is_subtype` est fourni et que la valeur porte un type FHIR (`Value::Primitive` avec un code de type), `ofType`, `is` et `as` SHALL répondre par l'ancêtrie des types FHIR pour un nom de type FHIR (`code` est une `string`, `canonical` et `url` sont des `uri` ; `string` n'est pas un `code`, `uri` n'est pas un `url`). Les noms System (`String`, `Integer`, ...) et les valeurs sans type FHIR (littéraux) SHALL conserver les règles System. Sans ce crochet (défaut), tester une `String` contre un sous-type FHIR de `string` SHALL échouer avec `EvalError::Type`.
+L'argument de `ofType`, `is` et `as` est un identifiant de nom de type. La correspondance de type (partagée par `ofType`, les fonctions `is`/`as` et les opérateurs `is`/`as`) SHALL accepter les types primitifs FHIRPath ainsi qu'un objet ressource dont `resourceType` est exactement égal au nom de type. Elle ne SHALL pas gérer les noms qualifiés (`FHIR.X`, `System.X`). Lorsque `Environment::is_subtype` est fourni et que la valeur porte un type FHIR (`Value::Primitive` avec un code de type), `ofType`, `is` et `as` SHALL répondre par l'ancêtrie des types FHIR pour un nom de type FHIR (`code` est une `string`, `canonical` et `url` sont des `uri` ; `string` n'est pas un `code`, `uri` n'est pas un `url`). Les noms System (`String`, `Integer`, ...) et les valeurs sans type FHIR (littéraux) SHALL conserver les règles System. Avec le crochet, un nom non qualifié qui n'est ni un type System ni un type FHIR (ex. `string1`) SHALL retourner `Err(EvalError::Type(...))` (`Any` et les noms qualifiés `System.X`/`FHIR.X` conservent la réponse précédente). Sans ce crochet (défaut), tester une `String` contre un sous-type FHIR de `string` SHALL échouer avec `EvalError::Type`.
 
 L'opérateur `is` (`X is Type`) SHALL avoir exactement la même sémantique que la fonction `is(Type)` (N1 §6.3.1) : collection vide en entrée -> collection vide, un seul élément -> `[Bool(true)]` ou `[Bool(false)]`, plus d'un élément -> `Err(EvalError::Type(...))`.
 
@@ -898,6 +898,25 @@ Le système SHALL analyser les constantes externes FHIRPath `%identifiant`, `%` 
 - **WHEN** `evaluate_parsed_with_environment` reçoit un `Environment` avec `resource` et `root_resource`
 - **THEN** `%resource` et `%rootResource` SHALL valoir ces valeurs
 
+### Requirement: defineVariable
+
+Le système SHALL implémenter `defineVariable(name [, expr])`. Elle retourne sa collection d'entrée inchangée. `name` est une expression qui SHALL donner une seule `String`, sinon `Err(EvalError::Type(...))`. La valeur est `expr` évaluée sur toute la collection d'entrée, ou l'entrée elle-même sans `expr`. La variable se lit `%name` dans le reste de sa chaîne d'expression (étapes suivantes et leurs arguments, y compris les arguments itérants `where`, `select`, `aggregate`), mais pas à travers les branches d'un `|` ni hors de l'argument de fonction où elle est définie. Redéfinir une variable déjà dans la portée ou une variable système (`context`, `resource`, `rootResource`, `ucum`, `sct`, `loinc`, `vs-*`, `ext-*`) SHALL retourner `Err(EvalError::Type(...))`.
+
+#### Scenario: Variable lue dans la suite de la chaîne
+
+- **WHEN** `defineVariable('v', 1).select(%v + 1)` est évalué
+- **THEN** le résultat SHALL être `[2]`
+
+#### Scenario: Variable hors portée
+
+- **WHEN** `%v` est lu après un `|` ou hors de l'argument où `defineVariable('v')` a été appelée
+- **THEN** l'évaluateur SHALL retourner une erreur (variable d'environnement inconnue)
+
+#### Scenario: Redéfinition
+
+- **WHEN** `defineVariable('v').defineVariable('v')` ou `defineVariable('resource')` est évalué
+- **THEN** l'évaluateur SHALL retourner `Err(EvalError::Type(...))`
+
 ### Requirement: Limitations connues
 
 Le système SHALL documenter les limitations suivantes de l'implémentation actuelle.
@@ -930,7 +949,7 @@ Le système SHALL documenter les limitations suivantes de l'implémentation actu
 
 ### Requirement: Exécution de la suite de tests officielle FHIRPath
 
-Le crate `fhir-fhirpath` SHALL fournir un test d'intégration exécutant `r5/fhirpath/tests-fhir-r5.xml` de `fhir-test-cases`. Chaque cas SHALL être évalué avec `evaluate_parsed_with_environment` sur son `inputfile` (passé aussi comme `%resource` ; un nom de fichier nu, sans partie répertoire, sous `r5/`, JSON ou XML analysé par `fhir-parser` puis converti par `resource_to_typed_value` avec `Registry::child_element` du Registry R5, et avec le crochet `is_subtype` issu du Registry (les éléments choix naviguent par le Registry comme dans le validateur)) ou sur un contexte vide ; un attribut `context` SHALL être évalué d'abord et son résultat sert de contexte. Un cas réussit quand les sorties correspondent en type et en valeur (ordre conservé sauf `ordered="false"` ; `predicate="true"` convertit le résultat en booléen), ou, pour une expression `invalid`, quand l'analyse ou l'évaluation échoue avec une erreur autre que `EvalError::UndefinedFunction` (une fonction absente ne prouve pas l'invalidité). Une panique, une entrée non chargeable, un `inputfile` comportant une partie répertoire ou une erreur de contexte compte comme un échec. Les cas dont le mode (du test ou du groupe) est `cda`, `tx` ou `custom` SHALL être ignorés et comptés. Le test SHALL afficher réussites/exécutés, ignorés, total et chaque cas en échec, et SHALL échouer si les nombres de cas exécutés et ignorés diffèrent exactement de (1226, 121) (dérive du chargeur ou du filtre d'ignorance) ou si moins de 948 cas réussissent (plancher de régression). Le répertoire de fixtures SHALL pouvoir être surchargé par `FHIR_FIXTURES_DIR` ; si le fichier de la suite est introuvable, le test SHALL être ignoré, sauf en CI (`CI` défini) où il SHALL échouer ; toute autre erreur de lecture de ce fichier SHALL faire échouer le test.
+Le crate `fhir-fhirpath` SHALL fournir un test d'intégration exécutant `r5/fhirpath/tests-fhir-r5.xml` de `fhir-test-cases`. Chaque cas SHALL être évalué avec `evaluate_parsed_with_environment` sur son `inputfile` (passé aussi comme `%resource` ; un nom de fichier nu, sans partie répertoire, sous `r5/`, JSON ou XML analysé par `fhir-parser` puis converti par `resource_to_typed_value` avec `Registry::child_element` du Registry R5, et avec le crochet `is_subtype` issu du Registry (les éléments choix naviguent par le Registry comme dans le validateur)) ou sur un contexte vide ; un attribut `context` SHALL être évalué d'abord et son résultat sert de contexte. Un cas réussit quand les sorties correspondent en type et en valeur (ordre conservé sauf `ordered="false"` ; `predicate="true"` convertit le résultat en booléen), ou, pour une expression `invalid`, quand l'analyse ou l'évaluation échoue avec une erreur autre que `EvalError::UndefinedFunction` (une fonction absente ne prouve pas l'invalidité). Une panique, une entrée non chargeable, un `inputfile` comportant une partie répertoire ou une erreur de contexte compte comme un échec. Les cas dont le mode (du test ou du groupe) est `cda`, `tx` ou `custom` SHALL être ignorés et comptés. Le test SHALL afficher réussites/exécutés, ignorés, total et chaque cas en échec, et SHALL échouer si les nombres de cas exécutés et ignorés diffèrent exactement de (1226, 121) (dérive du chargeur ou du filtre d'ignorance) ou si moins de 969 cas réussissent (plancher de régression). Le répertoire de fixtures SHALL pouvoir être surchargé par `FHIR_FIXTURES_DIR` ; si le fichier de la suite est introuvable, le test SHALL être ignoré, sauf en CI (`CI` défini) où il SHALL échouer ; toute autre erreur de lecture de ce fichier SHALL faire échouer le test.
 
 #### Scenario: Réussites sous le plancher
 

@@ -479,7 +479,7 @@ pub(super) fn value_is_type(
             "the FHIR type of a String is unknown, cannot test it for {type_name}"
         )));
     }
-    Ok(match type_name {
+    let system = match type_name {
         "Boolean" | "boolean" | "bool" => matches!(v, Value::Bool(_)),
         "Integer" | "integer" => matches!(v, Value::Integer(_)),
         "Long" | "long" => matches!(v, Value::Long(_)),
@@ -489,13 +489,33 @@ pub(super) fn value_is_type(
         "DateTime" | "dateTime" => matches!(v, Value::DateTime(_)),
         "Time" | "time" => matches!(v, Value::Time(_)),
         "Quantity" | "quantity" => matches!(v, Value::Quantity(_, _)),
-        // shortcut: resources match on their exact resourceType only (no Resource/DomainResource
-        // inheritance, no complex datatypes), upgrade when the evaluator gets Registry access.
-        _ => matches!(v, Value::Object(fields) if matches!(
-            fields.get("resourceType").map(Vec::as_slice),
-            Some([Value::String(rt)]) if **rt == *type_name
-        )),
-    })
+        _ => {
+            // An unqualified name that is neither a System nor a FHIR type is an
+            // error; qualified names (`System.X`, `FHIR.X`) keep the old answer.
+            if is_subtype.is_some_and(|is_subtype| {
+                !type_name.contains('.') && type_name != "Any" && !is_subtype(type_name, type_name)
+            }) {
+                return Err(EvalError::Type(format!("unknown type {type_name}")));
+            }
+            // shortcut: resources match on their exact resourceType only (no
+            // Resource/DomainResource inheritance, no complex datatypes), upgrade
+            // when the evaluator gets Registry access.
+            matches!(v, Value::Object(fields) if matches!(
+                fields.get("resourceType").map(Vec::as_slice),
+                Some([Value::String(rt)]) if **rt == *type_name
+            ))
+        }
+    };
+    Ok(system)
+}
+
+/// Fail on an unknown type name before looking at the input, so an empty
+/// input does not hide it (`Null` matches no type, it only runs the check).
+pub(super) fn check_type_name(
+    type_name: &str,
+    is_subtype: Option<&super::IsSubtype<'_>>,
+) -> Result<(), EvalError> {
+    value_is_type(&Value::Null, type_name, is_subtype).map(drop)
 }
 
 /// Shared by the `is` operator and `is()` (N1 §6.3.1): empty in, empty out;
@@ -505,6 +525,7 @@ pub(super) fn is_type(
     type_name: &str,
     is_subtype: Option<&super::IsSubtype<'_>>,
 ) -> Result<Collection, EvalError> {
+    check_type_name(type_name, is_subtype)?;
     match focus {
         [] => Ok(vec![]),
         [v] => Ok(vec![Value::Bool(value_is_type(v, type_name, is_subtype)?)]),
@@ -522,6 +543,7 @@ pub(super) fn as_type(
     type_name: &str,
     is_subtype: Option<&super::IsSubtype<'_>>,
 ) -> Result<Collection, EvalError> {
+    check_type_name(type_name, is_subtype)?;
     match focus {
         [] => Ok(vec![]),
         [v] => Ok(value_is_type(v, type_name, is_subtype)?
