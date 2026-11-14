@@ -130,3 +130,16 @@ fn unsupported_discriminator_is_reported_not_passed_silently() {
         ["DiagnosticReport.result"]
     );
 }
+
+#[test]
+fn extension_slice_is_matched_by_its_profile_url() {
+    // cdshooksguidanceresponse requires extension slice cdsHooksEndpoint (min 1), whose
+    // type profile is cqf-cdsHooksEndpoint.
+    let json = guidance_response(r#""moduleUri":"http://example.org/service""#);
+    let other = json.replace("cqf-cdsHooksEndpoint", "cqf-other");
+    assert!(paths(&json, "PROFILE_006", Severity::Error).is_empty());
+    assert_eq!(
+        paths(&other, "PROFILE_006", Severity::Error),
+        ["GuidanceResponse.extension"]
+    );
+}
