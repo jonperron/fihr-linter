@@ -9,12 +9,14 @@ use crate::diagnostic::{Diagnostic, Severity};
 use crate::fixed_pattern::{self, occurrences};
 use crate::invariants;
 use crate::resolve::{capitalise, complex_type};
+use crate::slicing::{self, Assigned, Item};
 
 /// Validate the profiles declared in `meta.profile`.
 ///
 /// Profiles known to the registry are checked for resource-type match
 /// (`PROFILE_002`) and their cardinality, `fixed[x]`/`pattern[x]` and value-slice rules are
-/// applied at every depth (`check_profile_object`). Unknown profiles
+/// applied at every depth (`check_profile_object`); `environment` evaluates discriminators and
+/// slice invariants. Unknown profiles
 /// produce a `PROFILE_001` warning because they cannot be validated against. A `|version`
 /// other than the loaded definition's gives a `PROFILE_003` warning.
 /// `resource_path` is the resource's instance path.
@@ -22,9 +24,14 @@ pub fn validate(
     resource: &Resource,
     base: &StructureDefinition,
     registry: &Registry,
+    environment: &Environment<'_>,
     resource_path: &str,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
+    let layer = Layer {
+        registry,
+        environment,
+    };
     let resource_type = resource.resource_type.as_ref();
     let Some(Value::Object(meta)) = resource.fields.get("meta").map(|n| &n.value) else {
         return;
@@ -92,6 +99,7 @@ pub fn validate(
                 own_descendants(sd, resource_type),
                 resource_type,
                 resource_path,
+                layer,
                 &mut found,
             );
             found.retain(|f| {
@@ -151,7 +159,11 @@ pub(crate) fn check_type_profiles(
             );
         }
         let run = own_descendants(profile, &root.path);
-        check_profile_object(fields, profile, run, &root.path, path, &mut found);
+        let layer = Layer {
+            registry,
+            environment,
+        };
+        check_profile_object(fields, profile, run, &root.path, path, layer, &mut found);
         found.retain(|f| {
             !diagnostics[start..]
                 .iter()
@@ -169,13 +181,15 @@ pub(crate) fn check_type_profiles(
 }
 
 /// Apply the rules of profile `sd` below `def_path` to one object (instance `path`), at every
-/// depth: child cardinality, `fixed[x]`/`pattern[x]` and value-discriminated slices.
+/// depth: child cardinality, `fixed[x]`/`pattern[x]` and slicing. The items a slice matches
+/// also get the slice's own `fixed[x]`/`pattern[x]`, invariants and children.
 pub(crate) fn check_profile_object(
     fields: &IndexMap<Arc<str>, Node>,
     sd: &StructureDefinition,
     run: &[ElementDefinition],
     def_path: &str,
     path: &str,
+    layer: Layer<'_, '_>,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
     check_run_cardinality(fields, sd, run, def_path, path, diagnostics);
@@ -187,20 +201,51 @@ pub(crate) fn check_profile_object(
         if elem.slice_name.is_some() {
             continue;
         }
+        let start = diagnostics.len();
         let subtree = subtree(run, k);
-        let present: Vec<(&Arc<str>, &Node)> = match rest.strip_suffix("[x]") {
-            Some(base) => fields
-                .iter()
-                .filter(|(key, _)| {
-                    key.strip_prefix(base)
-                        .is_some_and(|suffix| elem.types.iter().any(|t| capitalise(t) == suffix))
-                })
-                .collect(),
+        let (present, items): (Vec<(&Arc<str>, &Node)>, Vec<Item>) = match rest.strip_suffix("[x]")
+        {
+            Some(base) => {
+                // Every variant the base element allows is an item of the slicing; the rules
+                // below apply to the variants the profile keeps.
+                let types = choice_types(elem, layer.registry);
+                let variants: Vec<(&Arc<str>, &Node, &str)> = fields
+                    .iter()
+                    .filter_map(|(key, node)| {
+                        let suffix = key.strip_prefix(base)?;
+                        let ty = types.iter().find(|t| capitalise(t) == suffix)?;
+                        Some((key, node, ty.as_ref()))
+                    })
+                    .collect();
+                let present = variants
+                    .iter()
+                    .filter(|(_, _, ty)| elem.types.iter().any(|t| &**t == *ty))
+                    .map(|&(key, node, _)| (key, node))
+                    .collect();
+                let items = variants
+                    .iter()
+                    .map(|&(key, node, ty)| Item {
+                        node,
+                        path: format!("{path}.{key}"),
+                        choice_type: Some(ty),
+                    })
+                    .collect();
+                (present, items)
+            }
             None => {
                 let child_path = format!("{path}.{rest}");
-                let node = fields.get(rest);
-                fixed_pattern::check_slices(node, elem, subtree, &child_path, diagnostics);
-                fields.get_key_value(rest).into_iter().collect()
+                let items = fields
+                    .get(rest)
+                    .map(|node| occurrences(node, &child_path))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(node, path)| Item {
+                        node,
+                        path,
+                        choice_type: None,
+                    })
+                    .collect();
+                (fields.get_key_value(rest).into_iter().collect(), items)
             }
         };
         let own = without_own_slices(subtree, &elem.path);
@@ -212,9 +257,113 @@ pub(crate) fn check_profile_object(
             }
             for (item, item_path) in occurrences(node, &child_path) {
                 if let Value::Object(fields) = &item.value {
-                    check_profile_object(fields, sd, own, &elem.path, &item_path, diagnostics);
+                    check_profile_object(
+                        fields,
+                        sd,
+                        own,
+                        &elem.path,
+                        &item_path,
+                        layer,
+                        diagnostics,
+                    );
                 }
             }
         }
+        let child_path = format!("{path}.{rest}");
+        let mut found = Vec::new();
+        check_slices(&items, (elem, subtree), &child_path, sd, layer, &mut found);
+        // A slice repeats rules of the sliced element: keep each finding once.
+        found.retain(|f| {
+            !diagnostics[start..]
+                .iter()
+                .any(|d| d.code == f.code && d.path == f.path)
+        });
+        diagnostics.extend(found);
     }
+}
+
+/// What the profile layer reads besides the profile: the registry, and the FHIRPath
+/// environment of the resource for discriminators and slice invariants.
+#[derive(Clone, Copy)]
+pub(crate) struct Layer<'a, 'e> {
+    pub registry: &'a Registry,
+    pub environment: &'a Environment<'e>,
+}
+
+/// Assign the `items` of the sliced element `elem` (snapshot `run` below it, instance `path`)
+/// to their slices ([`slicing::assign`]), then apply to each item its slice's own
+/// `fixed[x]`/`pattern[x]`, the invariants the sliced element does not already have, and the
+/// slice's children.
+fn check_slices(
+    items: &[Item<'_>],
+    (elem, run): (&ElementDefinition, &[ElementDefinition]),
+    path: &str,
+    sd: &StructureDefinition,
+    layer: Layer<'_, '_>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let conforms = |fields: &IndexMap<Arc<str>, Node>, url: &str| {
+        let profile = layer.registry.structure_definition(url)?;
+        let root = profile.snapshot.first()?;
+        let run = own_descendants(profile, &root.path);
+        let mut found = Vec::new();
+        check_profile_object(fields, profile, run, &root.path, path, layer, &mut found);
+        Some(!found.iter().any(|d| d.severity == Severity::Error))
+    };
+    let assigned = slicing::assign(
+        items,
+        elem,
+        run,
+        path,
+        layer.registry,
+        layer.environment,
+        &conforms,
+        diagnostics,
+    );
+    let is_choice_variant =
+        |base: &str, suffix: &str| layer.registry.is_choice_variant(base, suffix);
+    for (item, assigned) in items.iter().zip(assigned) {
+        let Some(Assigned {
+            slice,
+            children,
+            value,
+        }) = assigned
+        else {
+            continue;
+        };
+        fixed_pattern::check_value(item.node, slice, &item.path, diagnostics);
+        let known = |key: &str| elem.constraints.iter().any(|c| *c.key == *key);
+        for constraint in slice.constraints.iter().filter(|c| !known(&c.key)) {
+            invariants::check(
+                constraint,
+                &value,
+                &is_choice_variant,
+                layer.environment,
+                &item.path,
+                Some(item.node.span),
+                diagnostics,
+            );
+        }
+        if let Value::Object(fields) = &item.node.value {
+            check_profile_object(
+                fields,
+                sd,
+                children,
+                &slice.path,
+                &item.path,
+                layer,
+                diagnostics,
+            );
+        }
+    }
+}
+
+/// The types the base definition allows for the choice element `elem` (a profile may keep
+/// fewer); the profile's own types when the base is not found.
+fn choice_types<'a>(elem: &'a ElementDefinition, registry: &'a Registry) -> &'a [Arc<str>] {
+    let root = elem.path.split('.').next().unwrap_or_default();
+    registry
+        .structure_definition(&format!("http://hl7.org/fhir/StructureDefinition/{root}"))
+        .and_then(|base| base.element(&elem.path))
+        .map_or(&elem.types, |base| &base.types)
 }

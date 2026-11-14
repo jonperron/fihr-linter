@@ -1,6 +1,7 @@
-//! `fixed[x]`, `pattern[x]` and value-discriminated slices of profile elements
-//! (elementdefinition.html, profiling.html#slicing).
-use fhir_definitions::{ChoiceValue, Discriminator, ElementDefinition};
+//! `fixed[x]` and `pattern[x]` of profile elements (elementdefinition.html), also used to
+//! match `value`/`pattern` slice discriminators.
+use fhir_definitions::ElementDefinition;
+use fhir_fhirpath::Value as FhirPathValue;
 use fhir_parser::{Node, Value};
 use serde_json::Value as Json;
 
@@ -33,6 +34,7 @@ pub(crate) fn check_value(
         return;
     }
     for (item, item_path) in occurrences(node, path) {
+        let values = fhir_fhirpath::from_parser_value(&item.value);
         let checks = [
             (elem.fixed.as_deref(), true, "PROFILE_004", "is not exactly"),
             (
@@ -43,7 +45,7 @@ pub(crate) fn check_value(
             ),
         ];
         for (expected, exact, code, verb) in checks {
-            let Some(expected) = expected.filter(|e| !matches(&item.value, &e.value, exact)) else {
+            let Some(expected) = expected.filter(|e| !matches_all(&values, &e.value, exact)) else {
                 continue;
             };
             diagnostics.push(
@@ -61,169 +63,54 @@ pub(crate) fn check_value(
     }
 }
 
-/// Whether `value` equals `expected` (`exact`: same properties, arrays item by item) or
-/// follows it as a pattern (every pattern property present and matching; each pattern array
-/// item matching some instance item). Numbers compare by value, as FHIR decimals.
-///
-/// shortcut: both sides arrive as `f64` (parser and serde_json), so decimals beyond 15-17
-/// significant digits can compare equal; upgrade when the parser keeps decimal text.
-fn matches(value: &Value, expected: &Json, exact: bool) -> bool {
-    match (value, expected) {
-        // The XML reshape keeps a lone repeating child scalar: it is a one-item array.
-        (value, Json::Array(expected)) if !matches!(value, Value::Array(_) | Value::Null) => {
-            match expected.as_slice() {
-                [only] => matches(value, only, exact),
-                _ => !exact && expected.iter().all(|e| matches(value, e, false)),
-            }
-        }
-        (Value::Str(s), Json::String(e)) => s.as_ref() == e,
-        (Value::Bool(b), Json::Bool(e)) => b == e,
-        (Value::Integer(i), Json::Number(e)) => match e.as_i64() {
-            Some(e) => *i == e,
-            None => e.as_f64() == Some(*i as f64),
-        },
-        (Value::Decimal(d), Json::Number(e)) => e.as_f64() == Some(*d),
-        (Value::Object(fields), Json::Object(map)) => {
-            (!exact || fields.len() == map.len())
-                && map.iter().all(|(key, e)| {
-                    fields
-                        .get(key.as_str())
-                        .is_some_and(|n| matches(&n.value, e, exact))
-                })
-        }
-        (Value::Array(items), Json::Array(expected)) if exact => {
-            items.len() == expected.len()
-                && items
+/// Whether the collection `values` equals `expected` (`exact`: arrays item by item) or
+/// follows it as a pattern (each pattern array item matching some value). A single expected
+/// value needs a single value.
+pub(crate) fn matches_all(values: &[FhirPathValue], expected: &Json, exact: bool) -> bool {
+    match (values, expected) {
+        (values, Json::Array(expected)) if exact => {
+            values.len() == expected.len()
+                && values
                     .iter()
                     .zip(expected)
-                    .all(|(n, e)| matches(&n.value, e, true))
+                    .all(|(v, e)| matches(v, e, true))
         }
-        (Value::Array(items), Json::Array(expected)) => expected
+        (values, Json::Array(expected)) => expected
             .iter()
-            .all(|e| items.iter().any(|n| matches(&n.value, e, false))),
+            .all(|e| values.iter().any(|v| matches(v, e, false))),
+        ([value], expected) => matches(value, expected, exact),
         _ => false,
     }
 }
 
-/// Check the cardinality of each slice of `elem` (sliced element whose snapshot elements
-/// below it, slices included, are `run`; instance `path`, value `node`) by counting the
-/// occurrences that match it (`PROFILE_006`).
+/// Whether `value` equals `expected` (`exact`: same properties, no extra extension or id on a
+/// primitive) or follows it as a pattern (every pattern property present and matching).
+/// Numbers compare by value, as FHIR decimals.
 ///
-/// shortcut: only slicings whose discriminators are all `value`/`pattern` on a plain path
-/// (or `$this`) fixed in every slice are evaluated, and a matched occurrence is not checked
-/// against the rest of its slice (nor closed or ordered slicing; reslices count as slices);
-/// revisit with full slicing support.
-pub(crate) fn check_slices(
-    node: Option<&Node>,
-    elem: &ElementDefinition,
-    run: &[ElementDefinition],
-    path: &str,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    // No discriminator: repetitions cannot be told apart, so slices are not counted.
-    let Some(slicing) = elem
-        .slicing
-        .as_ref()
-        .filter(|s| !s.discriminators.is_empty())
-    else {
-        return;
-    };
-    let items: Vec<&Node> = node
-        .map(|n| occurrences(n, path).into_iter().map(|(n, _)| n).collect())
-        .unwrap_or_default();
-    let starts: Vec<usize> = (0..run.len())
-        .filter(|&i| run[i].slice_name.is_some() && run[i].path == elem.path)
-        .collect();
-    let mut slices = Vec::with_capacity(starts.len());
-    for (k, &start) in starts.iter().enumerate() {
-        let end = starts.get(k + 1).copied().unwrap_or(run.len());
-        let (slice, children) = (&run[start], &run[start + 1..end]);
-        let Some(rules) = slicing
-            .discriminators
-            .iter()
-            .map(|d| discriminator_value(slice, children, d))
-            .collect::<Option<Vec<_>>>()
-        else {
-            return;
-        };
-        slices.push((slice, rules));
+/// shortcut: both sides arrive as `f64` (parser and serde_json), so decimals beyond 15-17
+/// significant digits can compare equal; upgrade when the parser keeps decimal text.
+fn matches(value: &FhirPathValue, expected: &Json, exact: bool) -> bool {
+    if let (FhirPathValue::Primitive(_, children, _), true) = (value, exact)
+        && !children.is_empty()
+    {
+        return false;
     }
-    for (slice, rules) in slices {
-        let count = items
-            .iter()
-            .filter(|item| {
-                rules.iter().all(|(segments, expected, exact)| {
-                    values_at(item, segments)
-                        .into_iter()
-                        .any(|v| matches(v, &expected.value, *exact))
+    match (value.primitive_value(), expected) {
+        (FhirPathValue::Object(fields), Json::Object(map)) => {
+            (!exact || fields.len() == map.len())
+                && map.iter().all(|(key, e)| {
+                    fields
+                        .get(key.as_str())
+                        .is_some_and(|values| matches_all(values, e, exact))
                 })
-            })
-            .count();
-        let name = slice.slice_name.as_deref().unwrap_or_default();
-        let message = if count < slice.min as usize {
-            format!(
-                "Slice '{name}' of '{path}' needs at least {} matching value(s), found {count}",
-                slice.min
-            )
-        } else if slice.max.parse::<usize>().is_ok_and(|max| count > max) {
-            format!(
-                "Slice '{name}' of '{path}' allows at most {} matching value(s), found {count}",
-                slice.max
-            )
-        } else {
-            continue;
-        };
-        let mut diagnostic = Diagnostic::error("PROFILE_006", message, path.to_owned());
-        if let Some(node) = node {
-            diagnostic = diagnostic.with_location(node.span);
         }
-        diagnostics.push(diagnostic);
+        (FhirPathValue::Bool(b), Json::Bool(e)) => b == e,
+        (FhirPathValue::Integer(i) | FhirPathValue::Long(i), Json::Number(e)) => match e.as_i64() {
+            Some(e) => *i == e,
+            None => e.as_f64() == Some(*i as f64),
+        },
+        (FhirPathValue::Decimal(d), Json::Number(e)) => e.as_f64() == Some(*d),
+        (_, Json::String(e)) => value.as_string().is_some_and(|s| *s == **e),
+        _ => false,
     }
-}
-
-/// The path segments a `value`/`pattern` discriminator reads, and the fixed (exact) or
-/// pattern value the slice gives that path; `None` when this slicing is not evaluated.
-fn discriminator_value<'a>(
-    slice: &'a ElementDefinition,
-    children: &'a [ElementDefinition],
-    discriminator: &'a Discriminator,
-) -> Option<(Vec<&'a str>, &'a ChoiceValue, bool)> {
-    if !matches!(discriminator.kind.as_ref(), "value" | "pattern") {
-        return None;
-    }
-    let (segments, target) = match discriminator.path.as_ref() {
-        "$this" => (Vec::new(), slice),
-        path if path.contains(['(', '[', '$']) => return None,
-        path => {
-            let full = format!("{}.{path}", slice.path);
-            let target = children
-                .iter()
-                .find(|e| e.slice_name.is_none() && *e.path == *full)?;
-            (path.split('.').collect(), target)
-        }
-    };
-    match (&target.fixed, &target.pattern) {
-        (Some(fixed), _) => Some((segments, fixed, true)),
-        (None, Some(pattern)) => Some((segments, pattern, false)),
-        (None, None) => None,
-    }
-}
-
-/// The values reached from `node` along `segments`, arrays flattened (FHIRPath navigation).
-fn values_at<'a>(node: &'a Node, segments: &[&str]) -> Vec<&'a Value> {
-    let mut current = vec![&node.value];
-    for segment in segments {
-        current = current
-            .into_iter()
-            .filter_map(|v| match v {
-                Value::Object(fields) => fields.get(*segment),
-                _ => None,
-            })
-            .flat_map(|n| match &n.value {
-                Value::Array(items) => items.iter().map(|i| &i.value).collect(),
-                v => vec![v],
-            })
-            .collect();
-    }
-    current
 }

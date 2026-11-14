@@ -826,9 +826,22 @@ Le système SHALL émettre `PROFILE_004` (erreur) pour chaque occurrence d'un é
 
 ---
 
-### Requirement: Validation de profil — cardinalité des slices par valeur (PROFILE_006)
+### Requirement: Validation de profil — découpage (PROFILE_006 à PROFILE_009, SLICING_SKIPPED)
 
-Pour un découpage dont tous les discriminateurs sont de type `value` ou `pattern` sur un chemin simple (ou `$this`) et dont chaque slice porte un `fixed`/`pattern`, le système SHALL compter les occurrences correspondant à chaque slice et les comparer au `min`/`max` de la slice, en émettant `PROFILE_006` (erreur) au chemin d'instance de l'élément découpé. Les autres découpages, les règles fermées/ordonnées, les re-slices et le contenu non discriminant d'une slice appariée SHALL NOT être évalués (raccourci). Les valeurs fixes à l'intérieur d'une slice SHALL s'appliquer uniquement à cette slice.
+Pour chaque élément découpé, le système SHALL affecter chaque répétition à la première slice dont elle satisfait tous les discriminateurs, les chemins de discriminateur étant évalués avec l'évaluateur FHIRPath sur la valeur typée de l'élément. Les types de discriminateur sont : `value`/`pattern` (un `fixed` exige l'égalité exacte, un `pattern` un sous-ensemble ; sans valeur fixe, toute valeur au chemin convient), `exists` (la cible avec `min>0` doit exister, avec `max=0` doit être absente), `type` (`$this` sur un choix `[x]` utilise le type de la clé ; sinon le type FHIR de la valeur ou son `resourceType` ; correspondance exacte, un type de slice abstrait accepte ses spécialisations) et `profile` (`$this` uniquement ; conforme = aucune erreur issue des règles de ce profil). Les slices d'extension SHALL être appariées par l'URL de leur unique `type.profile`, sur `url`. Pour un élément à choix `[x]`, chaque variante autorisée par la définition de base SHALL constituer un item. La comparaison `fixed`/`pattern` SHALL porter sur les valeurs FHIRPath (`_name` JSON fusionné ; une correspondance exacte rejette une primitive portant `id`/extensions).
+
+Le système SHALL émettre, au chemin d'instance concerné :
+- `PROFILE_006` (erreur) : le nombre d'items d'une slice est hors de son `min`/`max` (au chemin de l'élément découpé) ;
+- `PROFILE_007` (erreur) : découpage fermé et un item ne correspond à aucune slice (au chemin de l'item) ;
+- `PROFILE_008` (erreur) : découpage ordonné et un item correspond à une slice déclarée avant la slice d'un item précédent ;
+- `PROFILE_009` (erreur) : slice `openAtEnd` et un item apparaît après un item non apparié ;
+- `SLICING_SKIPPED` (information) : un discriminateur ne peut être évalué (chemin fonction tel que `resolve()`, `ofType()`, `extension('url')` ; chemin non analysable ; type non supporté tel que `position` ; slice ne donnant aucune valeur au chemin ; profil inconnu ; erreur d'évaluation). Il SHALL être émis seulement s'il existe des items ou une slice avec `min>0`, et le découpage n'est alors pas évalué.
+
+Exception : dans un découpage fermé, une slice `max=0` ne donnant aucune valeur de discriminateur (ex. `patch` du Bundle d'historique R5) SHALL ne correspondre à rien.
+
+Les items appariés SHALL recevoir les `fixed`/`pattern` propres à la slice, les invariants de la slice dont la clé est absente de l'élément découpé et les enfants de la slice ; les constats déjà faits au même code et même chemin SHALL NOT être répétés.
+
+Limites connues : les re-slices comptent comme des slices ; les chemins de discriminateur doivent désigner un élément.
 
 #### Scenario: Slice requise absente
 
@@ -840,10 +853,30 @@ Pour un découpage dont tous les discriminateurs sont de type `value` ou `patter
 - **WHEN** la catégorie `vital-signs` apparaît deux fois
 - **THEN** un Diagnostic `PROFILE_006` SHALL être émis à `Observation.category`
 
-#### Scenario: Découpage non évalué
+#### Scenario: Item hors slices d'un découpage fermé
 
-- **WHEN** un discriminateur n'est pas `value`/`pattern` ou une slice n'a ni `fixed` ni `pattern`
-- **THEN** aucun `PROFILE_006` SHALL être émis
+- **WHEN** un item ne correspond à aucune slice d'un découpage `closed`
+- **THEN** un Diagnostic `PROFILE_007` SHALL être émis au chemin de l'item
+
+#### Scenario: Ordre non respecté
+
+- **WHEN** dans un découpage `ordered`, un item correspond à une slice déclarée avant celle d'un item précédent
+- **THEN** un Diagnostic `PROFILE_008` SHALL être émis
+
+#### Scenario: openAtEnd
+
+- **WHEN** un item d'une slice d'un découpage `openAtEnd` suit un item non apparié
+- **THEN** un Diagnostic `PROFILE_009` SHALL être émis
+
+#### Scenario: Discriminateur non évaluable
+
+- **WHEN** un discriminateur utilise `resolve()`, un type `position`, un profil inconnu, ou une slice ne donne aucune valeur au chemin, et qu'il existe des items ou une slice avec `min>0`
+- **THEN** un Diagnostic `SLICING_SKIPPED` (information) SHALL être émis et aucun `PROFILE_006` à `PROFILE_009` SHALL être émis pour ce découpage
+
+#### Scenario: Slice max=0 sans valeur dans un découpage fermé
+
+- **WHEN** une slice `max=0` ne donne aucun discriminateur dans un découpage fermé
+- **THEN** elle SHALL ne correspondre à aucun item
 
 ---
 
