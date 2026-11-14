@@ -491,6 +491,8 @@ Une date en `String` SHALL être une date calendaire réelle (année `0001` à `
 
 Les unités calendaires des littéraux de quantité (`year`, `month`, `week`, `day`, `hour`, `minute`, `second`, `millisecond`, au singulier ou au pluriel) SHALL être stockées au singulier. `=` ne SHALL apparier une unité calendaire à son unité UCUM que pour `second`/`'s'` et `millisecond`/`'ms'` ; `~` SHALL les apparier toutes (`year`~`'a'`, `month`~`'mo'`, `week`~`'wk'`, `day`~`'d'`, `hour`~`'h'`, `minute`~`'min'`). Les comparaisons d'ordre SHALL accepter les mêmes paires que `=`.
 
+Pour `=`, `!=`, `~`, `!~`, `<`, `<=`, `>`, `>=`, un objet FHIR Quantity (enfants typés : `value` de type `decimal`, clés limitées à value/unit/system/code/id/extension, texte décimal XML fini) SHALL être traité comme une quantité littérale (R5 §2.1.9.1). Son unité est le `code` si `system` vaut `http://unitsofmeasure.org`, sinon le texte `unit` en l'absence de `code`, sinon aucune. Un `code` avec un `system` absent ou non UCUM, ou un `comparator`, n'est pas reconnu : la comparaison structurelle d'objets s'applique. Des unités non comparables (unités différentes, aucune conversion UCUM n'étant implémentée, ou unité d'un seul côté) SHALL donner une collection vide pour `=`, `!=` et les opérateurs d'ordre, et `false` pour `~`. `sort`/`min`/`max` sont inchangés.
+
 `toString()` et `convertsToString()` SHALL exiger une entrée singleton (plusieurs éléments : erreur). `String`, `Boolean`, `Integer`, `Long`, `Decimal`, `Date`, `DateTime`, `Time` et `Quantity` sont convertibles, tout autre élément non (collection vide pour `toString`, `false` pour `convertsToString`). Un `Decimal` SHALL toujours s'afficher avec une partie fractionnaire (`1.0` donne `'1.0'` ; `f64` ne conserve pas la précision du littéral, donc `1.50` donne `'1.5'`) et une `Quantity` SHALL s'afficher `valeur 'unité'`, unités calendaires comprises (`4 days` donne `"4 'day'"`). `toString` d'un `Decimal` non fini (littéral décimal au-delà de `f64`) SHALL donner une collection vide. `convertsToString` sur une entrée vide SHALL donner une collection vide.
 
 #### Scenario: toInteger depuis une chaîne
@@ -591,7 +593,17 @@ Les unités calendaires des littéraux de quantité (`year`, `month`, `week`, `d
 #### Scenario: Quantités calendaires et UCUM
 
 - **WHEN** `1 second = 1 's'`, `1 year = 1 'a'`, `1 year ~ 1 'a'` puis `1 week ~ 1 'd'` sont évalués
-- **THEN** les résultats SHALL être `[Bool(true)]`, `[Bool(false)]`, `[Bool(true)]` puis `[Bool(false)]`
+- **THEN** les résultats SHALL être `[Bool(true)]`, vide, `[Bool(true)]` puis `[Bool(false)]`
+
+#### Scenario: Quantity FHIR contre littéral
+
+- **WHEN** `Observation.valueQuantity` a `value` 185, `system` UCUM et `code` `[lb_av]`, puis `Observation.valueQuantity = 185 '[lb_av]'` et `Observation.valueQuantity = 185 'lbs'` sont évalués
+- **THEN** le premier résultat SHALL être `[Bool(true)]` et le second une collection vide
+
+#### Scenario: Unité contre absence d'unité
+
+- **WHEN** une Quantity FHIR `{"value": 1}` sans unité est comparée à une Quantity FHIR `{"value": 1, "unit": "tablets"}`, dans les deux sens, avec `=` puis `~`
+- **THEN** `=` SHALL donner une collection vide et `~` SHALL donner `[Bool(false)]` ; deux Quantity FHIR sans unité et de même valeur SHALL être égales
 
 #### Scenario: Date calendaire invalide
 

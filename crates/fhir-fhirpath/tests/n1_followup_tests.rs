@@ -218,12 +218,13 @@ fn calendar_duration_quantity_literals_parse() {
 }
 
 // N1 §6.1.1 / §6.1.2: calendar durations equal definite durations only for
-// seconds and below; they are equivalent to all of them.
+// seconds and below (above, they are not comparable: empty, official
+// testEquality36); they are equivalent to all of them.
 #[test]
 fn calendar_durations_against_ucum_units() {
     assert_eq!(eval("1 second = 1 's'"), boolean(true));
     assert_eq!(eval("1 millisecond = 1 'ms'"), boolean(true));
-    assert_eq!(eval("1 year = 1 'a'"), boolean(false));
+    assert_eq!(eval("1 year = 1 'a'"), vec![]);
     assert_eq!(eval("1 year ~ 1 'a'"), boolean(true));
     assert_eq!(eval("1 week ~ 1 'wk'"), boolean(true));
     assert_eq!(eval("1 week ~ 1 'd'"), boolean(false));
