@@ -77,10 +77,10 @@ fn value_attribute_on_a_complex_element_is_reported() {
 #[test]
 fn elements_named_value_url_and_id_that_are_child_elements_pass() {
     let found = patient_diagnostics(concat!(
-        "<identifier id=\"i1\"><value value=\"123\"/></identifier>",
         "<extension url=\"http://e.org\">",
         "<valueQuantity><value value=\"1\"/></valueQuantity>",
         "</extension>",
+        "<identifier id=\"i1\"><value value=\"123\"/></identifier>",
         "<birthDate id=\"b1\" value=\"2000-01-01\"/>",
     ));
     assert!(found.is_empty(), "{found:?}");
@@ -139,4 +139,155 @@ fn every_schema_instance_element_is_reported_at_its_location() {
         .filter_map(|d| d.location.map(|span| span.line))
         .collect();
     assert_eq!(lines, [1, 2]);
+}
+
+// xml.html: "Elements must always appear in the order documented".
+#[test]
+fn sibling_elements_out_of_snapshot_order_are_reported() {
+    let cases = [
+        (
+            "<gender value=\"male\"/><active value=\"true\"/>",
+            vec!["Error STRUCTURE_004 Patient.active"],
+        ),
+        // Each sibling written after `gender` but listed before it.
+        (
+            "<gender value=\"male\"/><active value=\"true\"/><name><family value=\"x\"/></name>",
+            vec![
+                "Error STRUCTURE_004 Patient.active",
+                "Error STRUCTURE_004 Patient.name",
+            ],
+        ),
+        (
+            "<name><given value=\"a\"/><family value=\"b\"/><given value=\"c\"/></name>",
+            vec!["Error STRUCTURE_004 Patient.name.family"],
+        ),
+        // A choice variant takes its base element's place (deceased[x] after birthDate).
+        (
+            "<deceasedBoolean value=\"false\"/><birthDate value=\"2000-01-01\"/>",
+            vec!["Error STRUCTURE_004 Patient.birthDate"],
+        ),
+        // Inside a backbone element.
+        (
+            "<contact><gender value=\"male\"/><name><family value=\"x\"/></name></contact>",
+            vec!["Error STRUCTURE_004 Patient.contact.name"],
+        ),
+    ];
+    for (body, expected) in cases {
+        assert_eq!(patient_diagnostics(body), expected, "{body}");
+    }
+}
+
+// The form error already covers an attribute written as a child element; no order error too.
+#[test]
+fn attribute_element_written_as_a_child_gets_only_the_form_error() {
+    assert_eq!(
+        patient_diagnostics("<name><family value=\"S\"/><id value=\"n1\"/></name>"),
+        ["Error STRUCTURE_001 Patient.name.id"],
+    );
+}
+
+#[test]
+fn elements_in_snapshot_order_pass() {
+    let found = patient_diagnostics(concat!(
+        "<meta><versionId value=\"1\"/></meta>",
+        "<extension url=\"http://e.org\"><valueString value=\"x\"/></extension>",
+        "<identifier><system value=\"http://e.org\"/><value value=\"1\"/></identifier>",
+        "<active value=\"true\"/>",
+        "<name><use value=\"official\"/><family value=\"S\"/>",
+        "<given value=\"a\"/><given value=\"b\"/></name>",
+        "<gender value=\"male\"/>",
+        "<birthDate id=\"b1\" value=\"2000-01-01\">",
+        "<extension url=\"http://e.org/a\"><valueBoolean value=\"true\"/></extension>",
+        "<extension url=\"http://e.org/b\"><valueBoolean value=\"true\"/></extension>",
+        "</birthDate>",
+        "<deceasedBoolean value=\"false\"/>",
+        "<multipleBirthInteger value=\"2\"/>",
+        "<contact><name><family value=\"x\"/></name><gender value=\"male\"/></contact>",
+    ));
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn elements_of_a_contained_resource_out_of_order_are_reported() {
+    let found = patient_diagnostics(concat!(
+        "<contained><Patient><id value=\"c1\"/>",
+        "<gender value=\"male\"/><active value=\"true\"/></Patient></contained>",
+    ));
+    assert!(
+        found
+            .iter()
+            .any(|d| d == "Error STRUCTURE_004 Patient.contained.active"),
+        "{found:?}"
+    );
+}
+
+// The resource id is lifted out of the fields by the parser (#89) but is trimmed like any
+// other attribute value (#71).
+#[test]
+fn trimmed_resource_id_gets_a_warning() {
+    let cases = [
+        "<id value=\" p1 \"/>",
+        concat!(
+            "<id value=\"p1 \"><extension url=\"http://e.org\">",
+            "<valueBoolean value=\"true\"/></extension></id>",
+        ),
+    ];
+    for body in cases {
+        assert_eq!(
+            patient_diagnostics(body),
+            ["Warning TYPE_007 Patient.id"],
+            "{body}"
+        );
+    }
+}
+
+/// Every diagnostic, invariants included, as `"<code> <path>"`.
+fn all_codes(resource: &fhir_parser::Resource) -> Vec<String> {
+    validate(resource, registry())
+        .iter()
+        .filter(|d| d.code.as_ref() != "INVARIANT_dom-6")
+        .map(|d| format!("{} {}", d.code, d.path))
+        .collect()
+}
+
+// xml.html: "Attributes cannot be empty", "FHIR elements are never empty"; json.html:
+// "Objects are never empty". ele-1 (every depth) and the type checks already report these,
+// once per node.
+#[test]
+fn empty_elements_objects_and_attributes_are_reported_once() {
+    let xml = |body: &str| {
+        parse_xml(&format!(
+            "<Patient xmlns=\"http://hl7.org/fhir\">{body}</Patient>"
+        ))
+        .expect("parses")
+    };
+    let json = |text: &str| fhir_parser::parse_json(text).expect("parses");
+    let cases = [
+        (xml("<name/>"), "INVARIANT_ele-1 Patient.name"),
+        (
+            xml("<contact><relationship/></contact>"),
+            "INVARIANT_ele-1 Patient.contact.relationship",
+        ),
+        (
+            xml("<name><family value=\"\"/></name>"),
+            "TYPE_003 Patient.name.family",
+        ),
+        (
+            json(r#"{"resourceType":"Patient","name":[{}]}"#),
+            "INVARIANT_ele-1 Patient.name[0]",
+        ),
+        (
+            json(r#"{"resourceType":"Patient","maritalStatus":{}}"#),
+            "INVARIANT_ele-1 Patient.maritalStatus",
+        ),
+    ];
+    for (resource, expected) in cases {
+        let found = all_codes(&resource);
+        let path = expected.split(' ').nth(1).expect("path");
+        let at_node: Vec<_> = found
+            .iter()
+            .filter(|d| d.split(' ').nth(1) == Some(path))
+            .collect();
+        assert_eq!(at_node, [expected], "{found:?}");
+    }
 }

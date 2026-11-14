@@ -6,7 +6,7 @@ use quick_xml::events::Event;
 use quick_xml::reader::{NsReader, Reader};
 
 use crate::line_index::LineIndex;
-use crate::types::{Node, ParseError, Resource, Span, Value};
+use crate::types::{Node, ParseError, Resource, Span, TrimmedAttribute, Value};
 use crate::xml_checks::{
     FHIR_NS, Notes, XHTML_NS, check_element, collect_attrs, div_has_control_reference, error_at,
     lift_resource_id, local_name_arc, reject_root_attrs, resolve_reference, span_at, xml_error,
@@ -118,13 +118,24 @@ fn parse_document(source: &str) -> Result<Resource, ParseError> {
                 reject_root_attrs(reader.resolver(), e, &line_index, pos)?;
                 let mut fields = parse_children(&mut reader, source, &line_index, 1, &mut notes)?;
 
-                let id = lift_resource_id(&mut fields, &line_index)?;
+                let lifted = lift_resource_id(&mut fields, &line_index)?;
+                let id_span = lifted.as_ref().map(|(_, span)| *span);
+                let trimmed_attributes = notes
+                    .trimmed
+                    .into_iter()
+                    .map(|(offset, name)| match id_span {
+                        Some(span) if span.offset == offset && name.as_ref() == "value" => {
+                            TrimmedAttribute::ResourceId(span)
+                        }
+                        _ => TrimmedAttribute::Element(offset, name),
+                    })
+                    .collect();
                 let resource = Resource {
                     resource_type,
-                    id,
+                    id: lifted.map(|(id, _)| id),
                     from_xml: true,
                     fields,
-                    trimmed_attributes: notes.trimmed,
+                    trimmed_attributes,
                     schema_instance: notes.schema_instance,
                 };
                 expect_eof(&mut reader, &line_index)?;
